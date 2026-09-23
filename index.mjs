@@ -1,4 +1,4 @@
-// dsh-ai-memory-bridge — a DSH plugin that closes ai-memory's consolidation loop.
+// dsh-ai-memory — a DSH plugin that closes ai-memory's consolidation loop.
 //
 // WHAT IT DOES
 // ai-memory turns a finished session's raw observations into searchable wiki
@@ -24,7 +24,7 @@ import { existsSync } from 'node:fs';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
-const LOG = '[ai-memory-bridge] ';
+const LOG = '[dsh-ai-memory] ';
 const VERSION = '1.0.0';
 
 const FINALIZE_TIMEOUT_MS = 120000;
@@ -67,7 +67,7 @@ const OID_NS = '6ba7b812-9dad-11d1-80b4-00c04fd430c8';
 // be passed explicitly.
 const DEFAULT_AGENT_KIND = 'claude-code';
 
-const name = 'ai-memory-bridge';
+const name = 'ai-memory';
 const inject = ['shell', 'sessions'];
 
 // ── Configuration ───────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-# dsh-ai-memory-bridge
+# dsh-ai-memory
 
 **Memory bridge between DeepSeek Harness and ai-memory.**
 
@@ -110,23 +110,23 @@ does nothing else. Capture failing is a separate problem with a separate cause.
 ## Install
 
 ```sh
-dsh plugin --profile web add dsh-ai-memory-bridge
+dsh plugin --profile web add dsh-ai-memory
 ```
 
 From GitHub instead of npm:
 
 ```sh
-dsh plugin --profile web add github:rasyidmmz/dsh-ai-memory-bridge
+dsh plugin --profile web add github:rasyidmmz/dsh-ai-memory
 ```
 
 Restart DSH afterwards. The loader imports plugin code without a cache-buster,
 so an edited or newly added plugin is not picked up until the process restarts.
 
-Confirm it loaded by searching the harness log for `ai-memory-bridge`:
+Confirm it loaded by searching the harness log for `ai-memory`:
 
 ```
-[ai-memory-bridge] active v1.0.0 -- fast path session/disposed (zero idle cost) + ...
-[ai-memory-bridge] preflight: ai-memory v2.4.0 | data_dir=... | server=127.0.0.1:49374
+[ai-memory] active v1.0.0 -- fast path session/disposed (zero idle cost) + ...
+[ai-memory] preflight: ai-memory v2.4.0 | data_dir=... | server=127.0.0.1:49374
 ```
 
 The preflight line is the fastest way to confirm the plugin found the same
@@ -139,8 +139,8 @@ plugin behaves identically with no `config:` block at all.
 
 ```yaml
 - insert:
-    - id: ai-memory-bridge
-      name: dsh-ai-memory-bridge
+    - id: ai-memory
+      name: dsh-ai-memory
       config:
         exePath: /usr/local/bin/ai-memory   # default: platform standard location
         dataDir: /home/me/.local/share/ai-memory  # default: let the CLI decide
@@ -247,7 +247,7 @@ plugin does not work.
 
 ## Troubleshooting
 
-All output is prefixed `[ai-memory-bridge]`. Search the harness log for it.
+All output is prefixed `[ai-memory]`. Search the harness log for it.
 
 | Log line | Meaning | Action |
 |---|---|---|

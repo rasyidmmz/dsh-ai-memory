@@ -1,4 +1,4 @@
 # dsh bundle patch: inserts this plugin into a profile's layer stack.
 - insert:
-    - id: ai-memory-bridge
-      name: dsh-ai-memory-bridge
+    - id: ai-memory
+      name: dsh-ai-memory
