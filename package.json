@@ -12,7 +12,8 @@
     "index.mjs",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "docs/"
   ],
   "repository": {
     "type": "git",
