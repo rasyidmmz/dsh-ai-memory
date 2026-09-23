@@ -1,0 +1,16 @@
+# Normalize line endings: LF in the repository regardless of the
+# contributor's platform. This keeps the published package byte-identical
+# whether it is committed from Windows, macOS, or Linux.
+* text=auto eol=lf
+
+# Windows-only helpers, if ever added, keep their CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary assets are never touched.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary

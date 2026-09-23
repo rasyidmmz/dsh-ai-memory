@@ -1,0 +1,41 @@
+{
+  "name": "dsh-ai-memory-bridge",
+  "description": "Closes ai-memory's consolidation loop for DSH: when a DSH session ends, calls ai-memory finalize-session so its captured observations become searchable wiki pages the other harnesses ai-memory serves can retrieve. Skips subagents, queues concurrent session ends, and sweeps sessions abandoned by a forced restart.",
+  "version": "1.0.0",
+  "license": "MIT",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rasyidmmz/dsh-ai-memory-bridge.git"
+  },
+  "homepage": "https://github.com/rasyidmmz/dsh-ai-memory-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/rasyidmmz/dsh-ai-memory-bridge/issues"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "dsh",
+    "cordis",
+    "ai-memory",
+    "finalize-session",
+    "agent-disposed",
+    "session-end",
+    "memory"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

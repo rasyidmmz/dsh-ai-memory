@@ -1,0 +1,131 @@
+{
+  "_comment": [
+    "ai-memory lifecycle hooks for DeepSeek Harness — EXAMPLE / TEMPLATE.",
+    "",
+    "This file is a starting point, not something the plugin installs for you.",
+    "Replace every <PLACEHOLDER> below with your own paths, then point the",
+    "`hooks-aimemory` row in your profile's cordis.patch.yml at it:",
+    "",
+    "  - insert:",
+    "      - id: hooks-aimemory",
+    "        name: '@deepseek-ai/dsh-hooks-claude-code'",
+    "        config:",
+    "          configPath: <ABSOLUTE PATH TO THIS FILE>",
+    "          defaultTimeoutMs: 30000",
+    "",
+    "WHY THIS FILE IS HAND-WRITTEN AND NOT `ai-memory install-hooks --apply`:",
+    "ai-memory emits hooks in exec form - the binary in `command` and every flag",
+    "in a sibling `args` array. dsh-hooks-claude-code does not read `args` at",
+    "all: it keeps only `typeof hook.command === 'string'` and discards the rest.",
+    "Running the generated snippet therefore spawns ai-memory with no arguments,",
+    "which prints its help text and exits 1 - capture silently does nothing.",
+    "So every command here is ONE string.",
+    "",
+    "DSH runs each command as:",
+    "  pwsh -NoLogo -NoProfile -NonInteractive -Command <string>",
+    "which means ordinary PowerShell quoting works. On Windows, keep the `&`",
+    "call operator.",
+    "",
+    "EVENTS: exactly the ones dsh-hooks-claude-code supports - SessionStart,",
+    "UserPromptSubmit, PreToolUse, PostToolUse, Stop, SubagentStart,",
+    "SubagentStop. ai-memory's own Claude Code preset also lists PreCompact and",
+    "SessionEnd; DSH fires neither, so they are omitted rather than registered as",
+    "dead entries. That missing SessionEnd is precisely why this plugin exists.",
+    "",
+    "PreToolUse is deliberately NOT registered. Nothing in the capture path needs",
+    "it - ai-memory already sees prompts and tool results - and it runs",
+    "synchronously before every tool call, adding latency to the hot path for no",
+    "recorded field.",
+    "",
+    "WHY Stop CHAINS `hook-drain`: ai-memory buffers each event into a spool file",
+    "and delivers it in a background drainer it spawns itself. Its native presets",
+    "trigger that drain on SessionEnd, and DSH never fires SessionEnd - so events",
+    "sat in the spool until the next SessionStart. Chaining the hidden but",
+    "documented-for-hooks `hook-drain` command makes delivery happen at the end of",
+    "every turn instead. Without it, recall in a new session is always one session",
+    "behind.",
+    "",
+    "SPOOL WRITE ACCESS: DSH runs hook commands through its sandbox, and on",
+    "Windows the confinement can deny writes to ai-memory's spool directory under",
+    "LOCALAPPDATA. The failure is SILENT - the hook still exits 0 - so capture",
+    "looks alive while nothing is recorded. If `ai-memory status` shows no",
+    "observations rising, check this before suspecting the hooks themselves.",
+    "",
+    "REPLACE <AI_MEMORY_EXE> with the full path to ai-memory.exe (Windows) or",
+    "ai-memory (Linux/macOS), and <AI_MEMORY_DATA_DIR> with your data directory:",
+    "  Windows: %LOCALAPPDATA%\\ai-memory",
+    "  Linux:   ~/.local/share/ai-memory",
+    "  macOS:   ~/Library/Application Support/ai-memory",
+    "",
+    "On Linux/macOS the command string must use POSIX quoting instead, e.g.",
+    "  \"<AI_MEMORY_EXE>\" --data-dir \"<AI_MEMORY_DATA_DIR>\" hook --event stop ..."
+  ],
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "& \"<AI_MEMORY_EXE>\" --data-dir \"<AI_MEMORY_DATA_DIR>\" hook --event session-start --agent claude-code --server-url http://127.0.0.1:49374",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "& \"<AI_MEMORY_EXE>\" --data-dir \"<AI_MEMORY_DATA_DIR>\" hook --event user-prompt-submit --agent claude-code --server-url http://127.0.0.1:49374",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "& \"<AI_MEMORY_EXE>\" --data-dir \"<AI_MEMORY_DATA_DIR>\" hook --event post-tool-use --agent claude-code --server-url http://127.0.0.1:49374",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "& \"<AI_MEMORY_EXE>\" --data-dir \"<AI_MEMORY_DATA_DIR>\" hook --event stop --agent claude-code --server-url http://127.0.0.1:49374; & \"<AI_MEMORY_EXE>\" --data-dir \"<AI_MEMORY_DATA_DIR>\" hook-drain",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "& \"<AI_MEMORY_EXE>\" --data-dir \"<AI_MEMORY_DATA_DIR>\" hook --event subagent-start --agent claude-code --server-url http://127.0.0.1:49374",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "& \"<AI_MEMORY_EXE>\" --data-dir \"<AI_MEMORY_DATA_DIR>\" hook --event subagent-stop --agent claude-code --server-url http://127.0.0.1:49374",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}
