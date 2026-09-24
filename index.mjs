@@ -266,6 +266,23 @@ function sessionIdToUuid(dshSessionId) {
   return dshSessionId;
 }
 
+/**
+ * A short, readable label for a session id in log lines.
+ *
+ * Naively slicing the first 8 characters is WRONG for a raw DSH id: a main
+ * session's id is `session-<uuid>`, so `slice(0, 8)` yields the constant,
+ * useless string `"session-"` — every session logs identically and the line
+ * tells you nothing. Strip the prefix first so the label is always the real
+ * UUID's first 8 characters.
+ *
+ * Tolerates a UUID that is already bare, and anything unrecognised.
+ */
+function shortLabel(value) {
+  const text = String(value);
+  const bare = text.startsWith('session-') ? text.slice('session-'.length) : text;
+  return bare.slice(0, 8);
+}
+
 /** A 16-byte BLOB from ai-memory → lowercase hyphenated UUID. */
 function blobToUuid(value) {
   if (!value) return '';
@@ -419,7 +436,7 @@ function apply(ctx, rawConfig) {
 
     if (isSubagent(id)) {
       skipped++;
-      console.log(LOG + 'skipping subagent ' + id.slice(0, 8) + ' (skipped total: ' + skipped + ')');
+      console.log(LOG + 'skipping subagent ' + shortLabel(id) + ' (skipped total: ' + skipped + ')');
       return;
     }
 
@@ -436,7 +453,7 @@ function apply(ctx, rawConfig) {
     // `session/disposed` usually handles this session first. Do not call the CLI
     // twice for the same session.
     if (uuidForCheck && finalizedRecently.has(uuidForCheck)) {
-      console.log(LOG + 'skipping ' + id.slice(0, 8) + ' (already finalized on the fast path)');
+      console.log(LOG + 'skipping ' + shortLabel(id) + ' (already finalized on the fast path)');
       return;
     }
 
@@ -476,7 +493,7 @@ function apply(ctx, rawConfig) {
     // Child sessions fire this too. As in `agent/disposed`, skip them so the
     // main session's record is not split.
     if (isSubagent(rawId)) {
-      console.log(LOG + 'fast: skipping child session ' + rawId.slice(0, 8));
+      console.log(LOG + 'fast: skipping child session ' + shortLabel(rawId));
       return;
     }
 
@@ -486,14 +503,14 @@ function apply(ctx, rawConfig) {
     try {
       uuid = sessionIdToUuid(rawId);
     } catch (e) {
-      console.log(LOG + 'fast: unrecognised id ' + rawId.slice(0, 8));
+      console.log(LOG + 'fast: unrecognised id ' + shortLabel(rawId));
       return;
     }
 
     // A stored row never keeps the `session-` prefix, so anything still carrying
     // it was never captured and has nothing to finalize.
     if (uuid.charAt(14) !== '5') {
-      console.log(LOG + 'fast: ' + rawId.slice(0, 8) + ' is not a main session, skipped');
+      console.log(LOG + 'fast: ' + shortLabel(rawId) + ' is not a main session, skipped');
       return;
     }
 
@@ -511,8 +528,6 @@ function apply(ctx, rawConfig) {
     const id = queue.shift();
     if (id === undefined) return;
     running = true;
-
-    const short = id.slice(0, 8);
 
     // Three sources can reach this queue:
     //   - `agent/disposed`: id is the DSH id (`session-<uuid>` for a main
@@ -534,15 +549,52 @@ function apply(ctx, rawConfig) {
         uuid = sessionIdToUuid(id);
       } catch (e) {
         running = false;
-        console.log(LOG + 'failed to derive uuid for ' + short + ': ' + String((e && e.message) || e));
+        console.log(LOG + 'failed to derive uuid for ' + shortLabel(id) + ': ' + String((e && e.message) || e));
         pump();
         return;
       }
     }
 
+    // DE-DUPLICATE HERE, NOT ONLY AT ENQUEUE TIME.
+    //
+    // The same session reaches this queue twice through two different id
+    // SHAPES: `agent/disposed` carries `session-<uuid>`, while
+    // `session/disposed` (the fast path) carries the bare stored UUID. Both
+    // arrive within milliseconds of each other, and both are checked against
+    // `finalizedRecently` when they are ENQUEUED — at which point the first
+    // finalize has not finished, so the set is still empty and both pass.
+    //
+    // Without this check `pump()` then runs the same session twice: the second
+    // call costs ~2.2 s and one `ai-memory.exe` process, and the CLI answers
+    // "No open sessions matched" because the first call already closed it.
+    // Observed in the field before this fix:
+    //   04:41:18.237 finalizing session session-   (raw id -> truncated label)
+    //   04:41:20.482 session -> page created
+    //   04:41:20.482 finalizing session c37c3911   (SAME session, second call)
+    //   04:41:22.665 session c37c3911 -> no open session matched
+    //
+    // Both shapes normalise to the same UUID, so comparing on `uuid` catches
+    // it regardless of which event enqueued it.
+    //
+    // NOTE: this check must NOT be narrowed to non-`hinted` items. The fast
+    // path (`session/disposed`) records a `sweepProjects` hint AND pushes to
+    // the queue, so the duplicate always arrives as a `hinted` item — an
+    // earlier version of this fix excluded those and therefore caught nothing.
+    // Caught by the functional test, not by reading the code.
+    if (finalizedRecently.has(uuid)) {
+      running = false;
+      console.log(LOG + 'skipping ' + shortLabel(uuid) + ' (already finalized)');
+      pump();
+      return;
+    }
+
     const project = hinted
       ? hinted.project
       : (workdir ? basename(workdir).toLowerCase() : '');
+    // Label from the NORMALISED uuid, never from the raw id: a raw
+    // `session-<uuid>` sliced to 8 characters is the useless string
+    // `"session-"`. See shortLabel().
+    const short = shortLabel(uuid);
     console.log(
       LOG + 'finalizing session ' + short +
       ' | uuid=' + uuid +
