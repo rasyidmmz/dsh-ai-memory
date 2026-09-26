@@ -16,13 +16,55 @@ proof it works — 1.0.1 did exactly that while finalizing nothing.
 
 | Plugin | DSH Desktop | ai-memory | Notes |
 |---|---|---|---|
-| 1.0.2 | 0.1.7-rc.2 | 2.4.1 | Current. Verified working. |
+| 1.0.3 | 0.1.7-rc.2 | 2.4.1 | Current. Documentation only — no code change. |
+| 1.0.2 | 0.1.7-rc.2 | 2.4.1 | Verified working. |
 | 1.0.1 | 0.1.7-rc.2 | 2.4.1 | **Broken on current DSH** — see below. |
 | 1.0.0 | ≤ 0.1.6 | 2.4.0 | Required `ctx.shell.run()`, removed in 0.1.7-rc.2. |
 
-**DSH below 0.1.7-rc.2:** use 1.0.2. The shell helper picks its calling
+**DSH below 0.1.7-rc.2:** use 1.0.2 or later. The shell helper picks its calling
 convention by capability (`typeof ctx.shell.execute`), not by version number, so
 it works on both old and new hosts.
+
+---
+
+## [1.0.3] - 26 Sep 2026
+
+**Documentation only. No code changed** — the shipped `index.mjs` is
+byte-identical to 1.0.2 apart from the version constant. This release exists
+because the README shown on the plugin directory carried two claims that were
+wrong, and a reader could not tell.
+
+### Fixed
+
+- **A DSH version that does not exist was named as tested.** The README said
+  "developed and tested against DSH Desktop 0.9.1". There is no DSH 0.9.1; the
+  number had been read off an unrelated changelog bundled in `app.asar`. The
+  real package is `@deepseek-ai/dsh-desktop` at **`0.1.7-rc.2`**, which is what
+  the rest of the same README already said. Corrected, with a note recording the
+  mistake rather than quietly overwriting it.
+
+- **The ai-memory compatibility line was stale.** It claimed 2.4.0 after the
+  author's own machine had moved to **2.4.1** and verified it. Now states 2.4.1,
+  and summarises the two entries from that upstream release that actually matter
+  here: CRLF pages loading without frontmatter, and session ids splitting on
+  letter case.
+
+- **The sample log output named old versions** (`active v1.0.2`,
+  `preflight: ai-memory v2.4.0`), so a user grepping for their own version found
+  nothing. Samples now match this release.
+
+### Why this is a release and not just an edit
+
+The README is the plugin's listing on the directory: it is what a prospective
+user reads before installing, and it is served from npm. An edit that never
+reaches the registry does not reach them. Versioning it is the only way to ship
+a correction to text people are already being shown.
+
+### Verification
+
+- `node --check index.mjs` clean.
+- **16/16** behaviour assertions still pass (unchanged code).
+- Logic parity with the local build: 15 same, 0 different.
 
 ---
 

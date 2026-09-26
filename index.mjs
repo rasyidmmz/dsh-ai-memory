@@ -25,7 +25,7 @@ import { existsSync } from 'node:fs';
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const LOG = '[dsh-ai-memory] ';
-const VERSION = '1.0.2';
+const VERSION = '1.0.3';
 
 const FINALIZE_TIMEOUT_MS = 120000;
 

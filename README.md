@@ -125,8 +125,8 @@ so an edited or newly added plugin is not picked up until the process restarts.
 Confirm it loaded by searching the harness log for `ai-memory`:
 
 ```
-[dsh-ai-memory] active v1.0.2 -- fast path session/disposed (zero idle cost) + ...
-[dsh-ai-memory] preflight: ai-memory v2.4.0 | data_dir=... | server=127.0.0.1:49374
+[dsh-ai-memory] active v1.0.3 -- fast path session/disposed (zero idle cost) + ...
+[dsh-ai-memory] preflight: ai-memory v2.4.1 | data_dir=... | server=127.0.0.1:49374
 ```
 
 The preflight line is the fastest way to confirm the plugin found the same
@@ -254,7 +254,7 @@ identical prefix makes it impossible to tell whose line you are reading.
 
 | Log line | Meaning | Action |
 |---|---|---|
-| `active v1.0.2 ...` | Plugin loaded | — |
+| `active v1.0.3 ...` | Plugin loaded | — |
 | `preflight: ai-memory vX \| data_dir=...` | Found the server | Confirm the data directory matches your hooks |
 | `WARNING: ai-memory executable not found` | Wrong `exePath` | Set `exePath` in config |
 | `preflight: the ai-memory server did not answer` | Server not running | Start ai-memory |
@@ -275,10 +275,17 @@ If nothing appears at all, the plugin is not loaded — check the profile's
 
 ## Compatibility
 
-- **DSH**: developed and tested against DSH Desktop 0.9.1 (harness
-  `0.1.7-rc.2`), Node 24.
-- **ai-memory**: developed and tested against **2.4.0**. The
-  `finalize-session` flags used here were verified present in that release.
+- **DSH**: developed and tested against DSH Desktop **`0.1.7-rc.2`**
+  (the `@deepseek-ai/dsh-desktop` package), Node 24.
+
+  > Earlier revisions of this README said "DSH Desktop 0.9.1". That was wrong —
+  > no such DSH version exists. `0.9.1` had been read off an unrelated
+  > changelog; the real package version is `0.1.7-rc.2`.
+
+- **ai-memory**: developed and tested against **2.4.1** (upgraded from 2.4.0,
+  verified working end-to-end). The `finalize-session` flags used here were
+  verified present in both releases. See the compatibility note below for what
+  the upgrade changed.
 - **Platforms**: Windows is the tested platform. Linux and macOS command
   construction is implemented and exercised, but not run end-to-end by the
   author — treat those as untested.
@@ -286,6 +293,18 @@ If nothing appears at all, the plugin is not loaded — check the profile's
   build step and no `allowBuilds` approval on install.
 - **No tools, no UI.** The plugin registers no model tools and draws no
   interface. It only listens and shells out.
+
+### ai-memory 2.4.0 → 2.4.1
+
+The upgrade was run and verified on the author's machine; nothing broke. The
+store kept every page, session and observation, and embeddings improved
+(6 pages missing → 0). Two entries in that release are worth knowing here:
+
+- **CRLF pages are read correctly again** — a page saved by a Windows editor
+  used to load without its frontmatter (`pinned` / `expires_at` silently lost).
+  Relevant on Windows, which is the tested platform.
+- **Session ids no longer split on letter case** — `D:\…\Default Project` could
+  become two separate projects. On an affected store, this release merges them.
 
 ### Two shell API shapes
 
