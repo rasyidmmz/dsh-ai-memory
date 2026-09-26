@@ -125,8 +125,8 @@ so an edited or newly added plugin is not picked up until the process restarts.
 Confirm it loaded by searching the harness log for `ai-memory`:
 
 ```
-[ai-memory] active v1.0.0 -- fast path session/disposed (zero idle cost) + ...
-[ai-memory] preflight: ai-memory v2.4.0 | data_dir=... | server=127.0.0.1:49374
+[dsh-ai-memory] active v1.0.2 -- fast path session/disposed (zero idle cost) + ...
+[dsh-ai-memory] preflight: ai-memory v2.4.0 | data_dir=... | server=127.0.0.1:49374
 ```
 
 The preflight line is the fastest way to confirm the plugin found the same
@@ -247,14 +247,18 @@ plugin does not work.
 
 ## Troubleshooting
 
-All output is prefixed `[ai-memory]`. Search the harness log for it.
+All output is prefixed `[dsh-ai-memory]`. Search the harness log for it.
+
+The prefix deliberately is not `[ai-memory]`: ai-memory has its own logs, and an
+identical prefix makes it impossible to tell whose line you are reading.
 
 | Log line | Meaning | Action |
 |---|---|---|
-| `active v1.0.0 ...` | Plugin loaded | — |
+| `active v1.0.2 ...` | Plugin loaded | — |
 | `preflight: ai-memory vX \| data_dir=...` | Found the server | Confirm the data directory matches your hooks |
 | `WARNING: ai-memory executable not found` | Wrong `exePath` | Set `exePath` in config |
 | `preflight: the ai-memory server did not answer` | Server not running | Start ai-memory |
+| `sandbox runner is broken (0xC0000142)` | DSH's sandbox runner is failing under Electron; the plugin switched to the unconfined path | See "Sandbox runner" below. Sessions still finalize |
 | `session ... -> page created` | Working | — |
 | `session ... -> no open session matched` | Already finalized, or never captured | Check `ai-memory status`; if observations are not rising, the **hooks** are the problem, not this plugin |
 | `session ... FAILED` | The CLI returned an error | The message tail is included |
@@ -272,7 +276,7 @@ If nothing appears at all, the plugin is not loaded — check the profile's
 ## Compatibility
 
 - **DSH**: developed and tested against DSH Desktop 0.9.1 (harness
-  `0.1.5-rc.2`), Node 24.
+  `0.1.7-rc.2`), Node 24.
 - **ai-memory**: developed and tested against **2.4.0**. The
   `finalize-session` flags used here were verified present in that release.
 - **Platforms**: Windows is the tested platform. Linux and macOS command
@@ -282,6 +286,48 @@ If nothing appears at all, the plugin is not loaded — check the profile's
   build step and no `allowBuilds` approval on install.
 - **No tools, no UI.** The plugin registers no model tools and draws no
   interface. It only listens and shells out.
+
+### Two shell API shapes
+
+The plugin calls `ctx.shell` through one helper that accepts **both** shapes:
+
+| Harness | Call | Result |
+|---|---|---|
+| older | `shell.run(spec)` | `{ exitCode, stdout, stderr }` |
+| DSH 0.1.7-rc.2 | `shell.execute(spec)` | handle, then `handle.result()` |
+
+This is detected by capability (`typeof ctx.shell.execute`), never by version
+number, so a future rename cannot silently break it again. It matters because
+`PwshLocalExecutor` in 0.1.7-rc.2 exposes **only** `execute()`: without the
+branch, every finalize dies with `shell.run is not a function` — and because the
+failure only reaches the log, it looks like "the plugin is loaded but nothing
+happens" rather than an error.
+
+### Sandbox runner
+
+DSH 0.1.7-rc.2 launches its sandbox runner through Electron, and the confined
+child process dies with `STATUS_DLL_INIT_FAILED` (`0xC0000142`). Measured
+directly, same command, correct SID:
+
+| Launcher | Result |
+|---|---|
+| `node.exe` + runner | `exit=0` (works) |
+| `DeepSeek Harness.exe` + runner | `exit=3221225794` (`0xC0000142`) |
+
+A plugin's `ctx.shell` calls carry no session, so they fall back to the default
+`workspace-write` policy and always take the broken path.
+
+The plugin therefore tries the **normal, confined** path first and falls back
+only when it sees `0xC0000142`, remembering the switch. The moment DSH fixes its
+runner, finalize returns to being sandboxed with no change needed here.
+
+**Be aware of the trade-off:** the fallback widens the CLI call's permissions
+beyond the workspace (`danger-full-access`). It is contained to the
+`ai-memory finalize-session` invocation — not the agent's own tools — and the
+plugin never writes files itself. If that is not acceptable in your setup, do not
+run it on a harness with a broken runner; there is no config switch to disable
+the fallback in 1.0.2.
+
 
 ### If ai-memory changes
 

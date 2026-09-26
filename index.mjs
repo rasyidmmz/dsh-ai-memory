@@ -25,7 +25,7 @@ import { existsSync } from 'node:fs';
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const LOG = '[dsh-ai-memory] ';
-const VERSION = '1.0.0';
+const VERSION = '1.0.2';
 
 const FINALIZE_TIMEOUT_MS = 120000;
 
@@ -299,6 +299,16 @@ function blobToUuid(value) {
   );
 }
 
+/** Does this directory really exist? Checked before handing over `workdir`. */
+function dirExists(path) {
+  if (typeof path !== 'string' || path.length === 0) return false;
+  try {
+    return existsSync(path);
+  } catch (e) {
+    return false;
+  }
+}
+
 // ── Plugin ──────────────────────────────────────────────────────────────────
 
 function apply(ctx, rawConfig) {
@@ -412,11 +422,99 @@ function apply(ctx, rawConfig) {
     }
   }
 
+  // ── Tolerate TWO shapes of the `ctx.shell` service ────────────────────────
+  //
+  //   older harness : shell.run(spec)     -> { exitCode, stdout, stderr }
+  //   DSH 0.1.7-rc.2: shell.execute(spec) -> handle, then handle.result()
+  //
+  // Measured from the app.asar that actually runs: `PwshLocalExecutor` exposes
+  // only `execute()` and no longer `run()`. Without this branch EVERY finalize
+  // dies with "shell.run is not a function" — silently, since the failure only
+  // reaches the log. Detected by capability (`typeof`), never by version number,
+  // so a future rename cannot silently break it again.
+  function runShell(spec) {
+    if (typeof ctx.shell.execute !== 'function') return ctx.shell.run(spec);
+    return Promise.resolve()
+      .then(function () { return ctx.shell.execute(spec); })
+      .then(function (h) { return h && typeof h.result === 'function' ? h.result() : h; });
+  }
+
+  // Environment for the child process, with PATHEXT guaranteed.
+  //
+  // Honest note: on this machine `pwsh-local` merges the parent process env
+  // before spawning, so PATHEXT is normally already present and this is a
+  // belt-and-braces measure rather than the fix for any observed failure. It is
+  // kept because a stripped environment DOES break the call outright:
+  //   minimal env (no PATHEXT) -> exit=1 ResourceUnavailable
+  //   minimal env + PATHEXT    -> exit=0, "ai-memory 2.4.0"
+  // Calling an absolute .exe path through `& "..."` still needs PATHEXT.
+  const ENV_FINALIZE = Object.assign({}, (typeof process !== 'undefined' && process.env) || {});
+  if (!ENV_FINALIZE.PATHEXT) {
+    ENV_FINALIZE.PATHEXT = '.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC;.CPL';
+  }
+
+  // ── Escape hatch when DSH's sandbox runner is broken ──────────────────────
+  //
+  // MEASURED (node.exe vs Electron, same command, correct SID):
+  //   node.exe                + sandbox runner -> exit=0           (works)
+  //   "DeepSeek Harness.exe"  + sandbox runner -> exit=3221225794  (0xC0000142)
+  //
+  // DSH 0.1.7-rc.2 launches that runner through Electron, and the confined child
+  // process dies with STATUS_DLL_INIT_FAILED. So `ctx.shell` calls from a plugin
+  // (which has no session, and therefore falls back to the default
+  // `workspace-write` policy) always take the broken path.
+  //
+  // `pwsh-sandbox.execute()` skips confinement entirely when the policy mode is
+  // 'danger-full-access', so the broken runner is never used. Design: try the
+  // NORMAL path first, fall back ONLY on 0xC0000142, and remember the switch —
+  // so the moment DSH fixes its runner, finalize returns to being confined with
+  // no change needed here.
+  let sandboxBroken = false;
+
+  function isBrokenRunner(k) {
+    return k === 3221225794 || k === -1073741502; // 0xC0000142, unsigned/signed
+  }
+
   function runFinalize(uuid, workdir, project) {
     const command = buildFinalizeCommand(config, uuid, project, platform);
-    const request = { command: command, timeoutMs: config.timeoutMs };
-    if (workdir) request.workdir = workdir;
-    return ctx.shell.run(ctx.shell.resolve(request));
+    const request = { command: command, timeoutMs: config.timeoutMs, env: ENV_FINALIZE };
+    // `workdir` is only attached when the directory really exists.
+    //
+    // If it does not, `ctx.shell` hands the vanished cwd to the child process,
+    // and Node reports that as ENOENT on the EXECUTABLE:
+    //     failed: spawn ...\node.exe ENOENT
+    // node.exe is present; the working directory is what is gone. The message
+    // misleads, and worse: the whole finalize chain dies, including the
+    // `--project` fallback in `pump()` that would otherwise have rescued the
+    // session. Observed in the field on 2026-09-25 (C:\UjiManual had been
+    // deleted while its session row still pointed at it).
+    //
+    // Without `workdir` the spec falls back to the ambient DSH process cwd.
+    // That is not ideal, but `project` already carries the scope, so the result
+    // is correct — and that beats failing outright.
+    if (workdir && dirExists(workdir)) request.workdir = workdir;
+    return finalizeWithFallback(request);
+  }
+
+  function withoutSandbox(req) {
+    return Object.assign({}, req, {
+      sandboxPolicy: { mode: 'danger-full-access', workspaceRoot: process.cwd() },
+    });
+  }
+
+  function finalizeWithFallback(request) {
+    if (sandboxBroken) return runShell(ctx.shell.resolve(withoutSandbox(request)));
+
+    return runShell(ctx.shell.resolve(request)).then(function (r) {
+      if (!r || !isBrokenRunner(r.exitCode)) return r;
+      // Only a harness that knows about sandbox modes can be re-policed this way.
+      let capable = false;
+      try { capable = typeof ctx.shell.sandboxMode === 'string' } catch (e) { capable = false }
+      if (!capable) return r;
+      sandboxBroken = true;
+      console.log(LOG + 'sandbox runner is broken (0xC0000142) -> using the unconfined path from now on');
+      return runShell(ctx.shell.resolve(withoutSandbox(request)));
+    });
   }
 
   function outputOf(result) {
@@ -588,6 +686,13 @@ function apply(ctx, rawConfig) {
       return;
     }
 
+    // A vanished `workdir` is reported once here instead of being left to
+    // surface as a misleading ENOENT from inside `runFinalize`.
+    if (workdir && !dirExists(workdir)) {
+      console.log(LOG + 'cwd is gone, dropping it: ' + workdir + ' (project carries the scope)');
+      workdir = '';
+    }
+
     const project = hinted
       ? hinted.project
       : (workdir ? basename(workdir).toLowerCase() : '');
@@ -652,7 +757,7 @@ function apply(ctx, rawConfig) {
     LOG + 'active v' + VERSION +
     ' -- fast path session/disposed (zero idle cost) + tiered sweeper safety net' +
     (config.sweep ? ' (25s/1m/3m/10m then 30m)' : ' (DISABLED via config)') +
-    '; two id shapes; explicit workdir; lowercase project fallback; no 2>&1; queue' +
+    '; two id shapes; explicit workdir only when the folder exists; lowercase project fallback; no 2>&1; queue' +
     '; agent=' + config.agentKind + '; exe=' + config.exePath
   );
 
@@ -834,7 +939,11 @@ function apply(ctx, rawConfig) {
     const command = buildStatusCommand(config, platform);
     Promise.resolve()
       .then(function () {
-        return ctx.shell.run(ctx.shell.resolve({ command: command, timeoutMs: 15000 }));
+        return runShell(ctx.shell.resolve({
+          command: command,
+          timeoutMs: 15000,
+          env: ENV_FINALIZE,
+        }));
       })
       .then(function (result) {
         const out = outputOf(result);
