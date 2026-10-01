@@ -125,7 +125,7 @@ so an edited or newly added plugin is not picked up until the process restarts.
 Confirm it loaded by searching the harness log for `ai-memory`:
 
 ```
-[dsh-ai-memory] active v1.0.4 -- fast path session/disposed (zero idle cost) + ...
+[dsh-ai-memory] active v1.0.5 -- fast path session/disposed (zero idle cost) + ...
 [dsh-ai-memory] preflight: ai-memory v2.4.2 | data_dir=... | server=127.0.0.1:49374
 ```
 
@@ -254,7 +254,7 @@ identical prefix makes it impossible to tell whose line you are reading.
 
 | Log line | Meaning | Action |
 |---|---|---|
-| `active v1.0.4 ...` | Plugin loaded | — |
+| `active v1.0.5 ...` | Plugin loaded | — |
 | `preflight: ai-memory vX \| data_dir=...` | Found the server | Confirm the data directory matches your hooks |
 | `WARNING: ai-memory executable not found` | Wrong `exePath` | Set `exePath` in config |
 | `preflight: the ai-memory server did not answer` | Server not running | Start ai-memory |

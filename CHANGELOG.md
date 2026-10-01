@@ -16,7 +16,8 @@ proof it works — 1.0.1 did exactly that while finalizing nothing.
 
 | Plugin | DSH Desktop | ai-memory | Notes |
 |---|---|---|---|
-| 1.0.4 | 0.2.0-rc.2 | 2.4.2 | Current. A session opened in a subfolder finalizes into its project's root. |
+| 1.0.5 | 0.2.0-rc.2 | 2.4.2 | Current. Log line reads its version from `package.json`. |
+| 1.0.4 | 0.2.0-rc.2 | 2.4.2 | Sessions opened in a subfolder finalize into the project root. **Its startup log says `active v1.0.3`** — see 1.0.5. |
 | 1.0.3 | 0.1.7-rc.2 | 2.4.1 | Documentation only — no code change. |
 | 1.0.2 | 0.1.7-rc.2 | 2.4.1 | Verified working. |
 | 1.0.1 | 0.1.7-rc.2 | 2.4.1 | **Broken on current DSH** — see below. |
@@ -27,6 +28,33 @@ convention by capability (`typeof ctx.shell.execute`), not by version number, so
 it works on both old and new hosts.
 
 ---
+
+## [1.0.5] - 1 Oct 2026
+
+### Fixed
+
+- **The startup log no longer reports a stale version.** `VERSION` was a
+  hand-edited constant, and it fell behind `package.json` **twice** — first
+  `active v1.0.0` while `package.json` said 1.0.2, then `active v1.0.3` while
+  `package.json` said 1.0.4. Both times the only visible symptom was a log line
+  that lied, which is exactly the question that line exists to answer: *which
+  build is actually loaded?*
+
+  The version is now read from the `package.json` shipped beside the module, so
+  there is no number left that can go stale. If it cannot be read, the log says
+  `active v?` rather than guessing.
+
+  **Version 1.0.4 is functionally correct but announces itself as `v1.0.3`.** If
+  you are on 1.0.4 and the log bothers you, this is the release that fixes it;
+  there is no behavioural difference between the two.
+
+### Verified
+
+- `uji-label-versi.mjs` — the guard that caught this — now passes for the
+  published repo. It imports the plugin, runs `apply()` against a mock context
+  and compares the captured log line with `package.json`, so a computed version
+  is checked for real rather than pattern-matched.
+- Behaviour suite **19/19**, parity **SEPADAN** (17 units).
 
 ## [1.0.4] - 1 Oct 2026
 

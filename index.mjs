@@ -21,11 +21,27 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { Buffer } from 'node:buffer';
 import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
 const LOG = '[dsh-ai-memory] ';
-const VERSION = '1.0.3';
+
+// Version is READ from package.json, never kept as a hand-edited constant.
+//
+// It drifted TWICE. The log said `active v1.0.0` while package.json said 1.0.2,
+// and then `active v1.0.3` while package.json said 1.0.4 — and both times the
+// only visible symptom was a log line that lied, which is precisely what that
+// line exists to prevent. `uji-label-versi.mjs` now catches it, but a guard
+// only reports the mistake; reading the real file removes the whole class.
+const VERSION = (function () {
+  try {
+    const pkg = join(dirname(fileURLToPath(import.meta.url)), 'package.json');
+    return String(JSON.parse(readFileSync(pkg, 'utf8')).version || '?');
+  } catch (e) {
+    return '?';
+  }
+})();
 
 const FINALIZE_TIMEOUT_MS = 120000;
 
