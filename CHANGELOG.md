@@ -16,7 +16,8 @@ proof it works — 1.0.1 did exactly that while finalizing nothing.
 
 | Plugin | DSH Desktop | ai-memory | Notes |
 |---|---|---|---|
-| 1.1.0 | 0.2.0-rc.2 | 2.5.2 | Current. Honours a marker's `identity`; re-finalizes a session that continued after one finalize. |
+| 1.1.1 | 0.2.0-rc.2 | 2.5.2 | Current. Makes the marker's `identity` actually work in the common case. |
+| 1.1.0 | 0.2.0-rc.2 | 2.5.2 | Honours a marker's `identity`; re-finalizes a session that continued. **Its `identity` support never ran when the marker sits in the session's own folder** — see 1.1.1. |
 | 1.0.5 | 0.2.0-rc.2 | 2.4.2 | Log line reads its version from `package.json`. |
 | 1.0.4 | 0.2.0-rc.2 | 2.4.2 | Sessions opened in a subfolder finalize into the project root. **Its startup log says `active v1.0.3`** — see 1.0.5. |
 | 1.0.3 | 0.1.7-rc.2 | 2.4.1 | Documentation only — no code change. |
@@ -29,6 +30,33 @@ convention by capability (`typeof ctx.shell.execute`), not by version number, so
 it works on both old and new hosts.
 
 ---
+
+## [1.1.1] - 1 Oct 2026
+
+### Fixed
+
+- **The `identity` support added in 1.1.0 never ran in the common case.** The
+  candidate that resolves a marker's `identity` to the project that owns it was
+  placed inside the branch that runs only when the session's folder sits BELOW
+  the marker root. But a marker that declares only `identity` **is** the root it
+  sits in, so the session's own folder is that root — precisely the case the
+  branch excludes. On any folder whose name differs from the identity's project,
+  the plugin looked the session up under the folder name instead, got
+  `No open ... sessions matched`, and left it to the sweeper.
+
+  Found by running the **installed** plugin against a real identity with a real
+  shell, not by the unit test: that test put the session in a subfolder, so it
+  exercised the harder case and walked straight past the common one. There is a
+  test for both shapes now, and the old code fails the new one.
+
+  Behaviour for markers without `identity` is unchanged.
+
+### Verified
+
+- Feature suite **9/9** on the published source, 7/7 on the local variant (two
+  assertions skipped there, with the reason printed). Against 1.1.0 the same
+  suite scores **8/9** — the new assertion is the one that fails.
+- Behaviour suite **19/19**; parity **SEPADAN** (18 units).
 
 ## [1.1.0] - 1 Oct 2026
 

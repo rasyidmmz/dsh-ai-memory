@@ -914,16 +914,29 @@ function apply(ctx, rawConfig) {
 
     // An `identity` in the marker OUTRANKS `project` (#708), and the name that
     // owns an identity is the server's decision, not a rule we can reproduce —
-    // so it is read back from the store instead of guessed. Tried first, because
-    // it is the most specific thing the marker told us.
+    // so it is read back from the store instead of guessed.
+    //
+    // Tried first, and INDEPENDENTLY of whether the session's folder is the
+    // marker root. That independence is not cosmetic: a marker that declares only
+    // `identity` IS the root it sits in, so the session's own folder is the root
+    // in the most common case of all. Gating this on `root !== workdir` — which
+    // 1.1.0 did — left the whole feature dead exactly there.
+    //
+    // Found 2026-10-01 by running the INSTALLED plugin against a real identity
+    // with a real shell: it sent `--project "uji-lapangan-lain"` (the folder)
+    // instead of the identity's `uji-identitas-lapangan`. The unit test missed it
+    // because it put the session in a subfolder — the harder case, and the rarer
+    // one. Keep a test for BOTH shapes.
     const identityProject = scope !== null && scope.identity
       ? projectForIdentity(scope.identity, config.binPath)
       : '';
 
-    if (scope !== null && scope.root !== workdir && dirExists(scope.root)) {
+    if (scope !== null && dirExists(scope.root)) {
       if (identityProject) attempts.push({ workdir: scope.root, project: identityProject });
-      attempts.push({ workdir: scope.root, project: '' });
-      if (scope.project) attempts.push({ workdir: scope.root, project: scope.project });
+      if (scope.root !== workdir) {
+        attempts.push({ workdir: scope.root, project: '' });
+        if (scope.project) attempts.push({ workdir: scope.root, project: scope.project });
+      }
     }
     attempts.push({ workdir: workdir, project: '' });
     const fallbackProject = scope !== null ? scope.project : project;
