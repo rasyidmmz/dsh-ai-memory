@@ -125,8 +125,8 @@ so an edited or newly added plugin is not picked up until the process restarts.
 Confirm it loaded by searching the harness log for `ai-memory`:
 
 ```
-[dsh-ai-memory] active v1.0.3 -- fast path session/disposed (zero idle cost) + ...
-[dsh-ai-memory] preflight: ai-memory v2.4.1 | data_dir=... | server=127.0.0.1:49374
+[dsh-ai-memory] active v1.0.4 -- fast path session/disposed (zero idle cost) + ...
+[dsh-ai-memory] preflight: ai-memory v2.4.2 | data_dir=... | server=127.0.0.1:49374
 ```
 
 The preflight line is the fastest way to confirm the plugin found the same
@@ -254,7 +254,7 @@ identical prefix makes it impossible to tell whose line you are reading.
 
 | Log line | Meaning | Action |
 |---|---|---|
-| `active v1.0.3 ...` | Plugin loaded | — |
+| `active v1.0.4 ...` | Plugin loaded | — |
 | `preflight: ai-memory vX \| data_dir=...` | Found the server | Confirm the data directory matches your hooks |
 | `WARNING: ai-memory executable not found` | Wrong `exePath` | Set `exePath` in config |
 | `preflight: the ai-memory server did not answer` | Server not running | Start ai-memory |
@@ -275,17 +275,19 @@ If nothing appears at all, the plugin is not loaded — check the profile's
 
 ## Compatibility
 
-- **DSH**: developed and tested against DSH Desktop **`0.1.7-rc.2`**
-  (the `@deepseek-ai/dsh-desktop` package), Node 24.
+- **DSH**: developed and tested against DSH Desktop **`0.2.0-rc.2`**
+  (the `@deepseek-ai/dsh-desktop` package), Node 24. 1.0.4 was verified here.
 
   > Earlier revisions of this README said "DSH Desktop 0.9.1". That was wrong —
   > no such DSH version exists. `0.9.1` had been read off an unrelated
-  > changelog; the real package version is `0.1.7-rc.2`.
+  > changelog; the package version at the time was `0.1.7-rc.2`. It is
+  > `0.2.0-rc.2` now, and earlier versions (1.0.0-1.0.3) were tested on
+  > `0.1.7-rc.2`.
 
-- **ai-memory**: developed and tested against **2.4.1** (upgraded from 2.4.0,
-  verified working end-to-end). The `finalize-session` flags used here were
-  verified present in both releases. See the compatibility note below for what
-  the upgrade changed.
+- **ai-memory**: developed and tested against **2.4.2** (upgraded from 2.4.0
+  through 2.4.1, each verified working end-to-end). The `finalize-session` flags
+  used here were verified present in all three releases. See the compatibility
+  note below for what the upgrades changed.
 - **Platforms**: Windows is the tested platform. Linux and macOS command
   construction is implemented and exercised, but not run end-to-end by the
   author — treat those as untested.

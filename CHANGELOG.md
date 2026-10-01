@@ -16,7 +16,8 @@ proof it works — 1.0.1 did exactly that while finalizing nothing.
 
 | Plugin | DSH Desktop | ai-memory | Notes |
 |---|---|---|---|
-| 1.0.3 | 0.1.7-rc.2 | 2.4.1 | Current. Documentation only — no code change. |
+| 1.0.4 | 0.2.0-rc.2 | 2.4.2 | Current. A session opened in a subfolder finalizes into its project's root. |
+| 1.0.3 | 0.1.7-rc.2 | 2.4.1 | Documentation only — no code change. |
 | 1.0.2 | 0.1.7-rc.2 | 2.4.1 | Verified working. |
 | 1.0.1 | 0.1.7-rc.2 | 2.4.1 | **Broken on current DSH** — see below. |
 | 1.0.0 | ≤ 0.1.6 | 2.4.0 | Required `ctx.shell.run()`, removed in 0.1.7-rc.2. |
@@ -24,6 +25,46 @@ proof it works — 1.0.1 did exactly that while finalizing nothing.
 **DSH below 0.1.7-rc.2:** use 1.0.2 or later. The shell helper picks its calling
 convention by capability (`typeof ctx.shell.execute`), not by version number, so
 it works on both old and new hosts.
+
+---
+
+## [1.0.4] - 1 Oct 2026
+
+### Fixed
+
+- **A session opened in a subfolder is now finalized into its project's root.**
+  ai-memory derives a session's project from its working directory, and a
+  `.ai-memory.toml` marker pins the name only for the folder that HOLDS it —
+  measured with `ai-memory doctor`: run from `C:\Code\Dsh\arsip-dump` it answers
+  project `arsip-dump`, not `dsh`, while the workspace is still inherited from
+  the ancestor marker.
+
+  So a session started in `<project>\sub` was looked up under a project named
+  `sub`, the CLI answered `No open ... sessions matched`, and the session was
+  left to the sweeper instead of being summarized on the spot. The plugin now
+  walks up from the session's directory to the nearest marker and tries that
+  project FIRST, so the fast path succeeds the same way it does for a session
+  opened at the root.
+
+  The walk stops at a `.git` boundary, so a nested repository such as
+  `ai-memory/plugin-publik` keeps its own project instead of being folded into
+  its parent. A session whose folder is not inside a marker root behaves exactly
+  as before — the previous behaviour is still in the candidate chain, so a
+  session captured before this change (project = folder basename) finalizes too
+  rather than being retried on every sweep.
+
+  Nothing else changed: no new configuration, no new dependency, and the
+  resolution is bounded and silent (any failure falls back to the old path).
+
+### Verified
+
+- Behaviour suite **19/19**, against the installed copy, the published source and
+  the local variant. Three of those assertions are new and cover this case: with
+  the previous code they fail (17/19), which is how the fix was confirmed to be
+  the thing that makes them pass.
+- Parity between the local and published variants: **SEPADAN** (17 compared
+  units — the two new scope helpers included, so the rule cannot drift between
+  them).
 
 ---
 

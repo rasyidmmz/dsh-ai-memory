@@ -17,10 +17,10 @@
 // SIGTERM, which fires no disposal event at all.
 
 import { createHash } from 'node:crypto';
-import { basename, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { Buffer } from 'node:buffer';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -307,6 +307,95 @@ function dirExists(path) {
   } catch (e) {
     return false;
   }
+}
+
+// ── Project scope from the filesystem ───────────────────────────────────────
+//
+// WHY THIS EXISTS (2026-10-01)
+// ai-memory derives a session's project from its working directory, and a
+// `.ai-memory.toml` marker pins the name only for the folder that HOLDS it.
+// Measured with `ai-memory doctor`: run from `C:\Code\Dsh\arsip-dump` it answers
+// project `arsip-dump`, not `dsh`, while the WORKSPACE is still inherited from
+// the ancestor marker.
+//
+// DSH now rewrites every hook event's cwd to the project root (see
+// `ai-memory/alat/lingkup-hook.mjs`), so a session opened in a subfolder is
+// CAPTURED under the marker's project. This plugin has to resolve the SAME
+// scope, or else the fast path looks for the session under `arsip-dump`, finds
+// nothing, and leaves it to the sweeper.
+//
+// The walk stops at `.git`, so a nested repository (`ai-memory/plugin-publik`)
+// keeps its own project instead of being folded into its parent.
+//
+// BOUNDED AND SILENT: any failure returns null, and every caller then behaves
+// exactly as it did before this change.
+function scopeForDir(dir) {
+  if (typeof dir !== 'string' || dir.length === 0) return null;
+  let current;
+  try {
+    current = resolve(dir);
+  } catch (e) {
+    return null;
+  }
+  for (;;) {
+    const marker = readMarkerScope(join(current, '.ai-memory.toml'));
+    if (marker !== null) return { root: current, project: marker.project, workspace: marker.workspace };
+    try {
+      if (existsSync(join(current, '.git'))) return null;
+    } catch (e) {
+      return null;
+    }
+    const parent = dirname(current);
+    if (parent === current) return null;
+    current = parent;
+  }
+}
+
+/**
+ * Read `project` (and `workspace`) out of one marker file.
+ * A hand-rolled reader on purpose: the marker only ever holds flat
+ * `key = "value"` pairs under `[project]`, and the plugin must not add a TOML
+ * dependency for that. Returns null when the file is absent or has no project.
+ */
+function readMarkerScope(markerFile) {
+  let text;
+  try {
+    if (!existsSync(markerFile)) return null;
+    text = readFileSync(markerFile, 'utf8');
+  } catch (e) {
+    return null;
+  }
+  let project = '';
+  let workspace = '';
+  let inProject = false;
+  const lines = String(text).split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.length === 0 || line.charAt(0) === '#') continue;
+    const section = /^\[([^\]]+)\]$/.exec(line);
+    if (section !== null) {
+      inProject = section[1].trim() === 'project';
+      continue;
+    }
+    if (!inProject) continue;
+    // Nilai dibaca TANPA regex yang memuat tanda kutip. Regex seperti
+    // /["']...["']/ menjebak pembaca kurung di alat parity: ia melihat kutip
+    // bergantian sebagai pembuka/penutup string dan bisa salah menghitung
+    // kurung. Perbandingan karakter biasa tidak punya masalah itu.
+    const eq = line.indexOf('=');
+    if (eq < 0) continue;
+    const key = line.slice(0, eq).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue;
+    let value = line.slice(eq + 1).trim();
+    const first = value.charAt(0);
+    if ((first === '"' || first === "'") && value.charAt(value.length - 1) === first) {
+      value = value.slice(1, value.length - 1);
+    }
+    if (key === 'project') project = value.trim();
+    else if (key === 'workspace') workspace = value.trim();
+  }
+  if (project.length === 0) return null;
+  return { project: project, workspace: workspace };
 }
 
 // ── Plugin ──────────────────────────────────────────────────────────────────
@@ -708,19 +797,46 @@ function apply(ctx, rawConfig) {
       (queue.length > 0 ? ' | queued: ' + queue.length : '')
     );
 
-    Promise.resolve()
-      .then(function () { return runFinalize(uuid, workdir, ''); })
-      .then(function (first) {
-        const out = outputOf(first);
-        if (/Finalized/i.test(out)) return { stage: 'marker', out: out, result: first };
-        // Repo without a marker: the folder basename does not match the project
-        // name the hooks wrote (case differs). Retry with the lowercase name.
-        if (project && /No open .* sessions matched/i.test(out)) {
-          return runFinalize(uuid, workdir, project)
-            .then(function (second) { return { stage: 'fallback', out: outputOf(second), result: second }; });
+    // ── Candidate chain (2026-10-01) ────────────────────────────────────────
+    // The historical behaviour stays in the chain verbatim (ambient cwd, no
+    // `--project`). When the session's folder sits INSIDE a marker root, the
+    // project-root attempts are PREPENDED, because that is where the hooks now
+    // record its observations. Keeping the raw-cwd attempts means a session
+    // captured BEFORE the hook wrapper (project = folder basename) still
+    // finalizes instead of being retried on every sweep.
+    const scope = scopeForDir(workdir);
+    const attempts = [];
+    if (scope !== null && scope.root !== workdir && dirExists(scope.root)) {
+      attempts.push({ workdir: scope.root, project: '' });
+      attempts.push({ workdir: scope.root, project: scope.project });
+    }
+    attempts.push({ workdir: workdir, project: '' });
+    const fallbackProject = scope !== null ? scope.project : project;
+    if (fallbackProject) attempts.push({ workdir: workdir, project: fallbackProject });
+    if (hinted && hinted.project && hinted.project !== fallbackProject) {
+      attempts.push({ workdir: workdir, project: hinted.project });
+    }
+
+    // Stop at the FIRST success. "No open ... sessions matched" means "not in
+    // this project", so the next candidate is tried. Any other failure is
+    // terminal: retrying it would only spend more CLI processes on one error.
+    function tryAttempt(i, lastResult, lastOut) {
+      if (i >= attempts.length) {
+        return Promise.resolve({ stage: 'exhausted', out: lastOut, result: lastResult, project: '' });
+      }
+      const k = attempts[i];
+      return runFinalize(uuid, k.workdir, k.project).then(function (r) {
+        const out = outputOf(r);
+        if (/Finalized/i.test(out)) {
+          return { stage: k.project ? 'fallback' : 'marker', out: out, result: r, project: k.project };
         }
-        return { stage: 'marker', out: out, result: first };
-      })
+        if (/No open .* sessions matched/i.test(out)) return tryAttempt(i + 1, r, out);
+        return { stage: 'marker', out: out, result: r, project: k.project };
+      });
+    }
+
+    Promise.resolve()
+      .then(function () { return tryAttempt(0, null, ''); })
       .then(function (f) {
         if (/Finalized/i.test(f.out)) {
           done++;
@@ -729,7 +845,7 @@ function apply(ctx, rawConfig) {
           finalizedRecently.add(uuid);
           console.log(
             LOG + 'session ' + short + ' -> page created' +
-            (f.stage === 'fallback' ? ' (via --project ' + project + ')' : '') +
+            (f.stage === 'fallback' ? ' (via --project ' + f.project + ')' : '') +
             ' (exit=' + String(f.result && f.result.exitCode) + ', created total: ' + done + ')'
           );
         } else if (/No open .* sessions matched/i.test(f.out)) {
