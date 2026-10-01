@@ -125,8 +125,8 @@ so an edited or newly added plugin is not picked up until the process restarts.
 Confirm it loaded by searching the harness log for `ai-memory`:
 
 ```
-[dsh-ai-memory] active v1.0.5 -- fast path session/disposed (zero idle cost) + ...
-[dsh-ai-memory] preflight: ai-memory v2.4.2 | data_dir=... | server=127.0.0.1:49374
+[dsh-ai-memory] active v1.1.0 -- fast path session/disposed (zero idle cost) + ...
+[dsh-ai-memory] preflight: ai-memory v2.5.2 | data_dir=... | server=127.0.0.1:49374
 ```
 
 The preflight line is the fastest way to confirm the plugin found the same
@@ -254,7 +254,7 @@ identical prefix makes it impossible to tell whose line you are reading.
 
 | Log line | Meaning | Action |
 |---|---|---|
-| `active v1.0.5 ...` | Plugin loaded | — |
+| `active v1.1.0 ...` | Plugin loaded | — |
 | `preflight: ai-memory vX \| data_dir=...` | Found the server | Confirm the data directory matches your hooks |
 | `WARNING: ai-memory executable not found` | Wrong `exePath` | Set `exePath` in config |
 | `preflight: the ai-memory server did not answer` | Server not running | Start ai-memory |
@@ -284,10 +284,11 @@ If nothing appears at all, the plugin is not loaded — check the profile's
   > `0.2.0-rc.2` now, and earlier versions (1.0.0-1.0.3) were tested on
   > `0.1.7-rc.2`.
 
-- **ai-memory**: developed and tested against **2.4.2** (upgraded from 2.4.0
-  through 2.4.1, each verified working end-to-end). The `finalize-session` flags
-  used here were verified present in all three releases. See the compatibility
-  note below for what the upgrades changed.
+- **ai-memory**: developed and tested against **2.5.2** (upgraded from 2.4.0
+  through 2.5.2, each verified working end-to-end). The `finalize-session` and
+  `status` flags used here were verified present in all of them; `--reopen` and
+  the marker's `identity` key arrived in 2.5.0 and are used by 1.1.0. See the
+  compatibility note below for what the upgrades changed.
 - **Platforms**: Windows is the tested platform. Linux and macOS command
   construction is implemented and exercised, but not run end-to-end by the
   author — treat those as untested.

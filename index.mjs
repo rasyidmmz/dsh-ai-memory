@@ -233,7 +233,7 @@ function buildStatusCommand(config, platform) {
  * The command then exits 1 having done nothing. `ctx.shell` already separates
  * stdout and stderr (`r.stdout.text`, `r.stderr.text`).
  */
-function buildFinalizeCommand(config, uuid, project, platform) {
+function buildFinalizeCommand(config, uuid, project, platform, reopen) {
   const exe = quoteArg(config.exePath, platform);
   const parts = [platform === 'win32' ? '& ' + exe : exe, 'finalize-session'];
 
@@ -244,6 +244,14 @@ function buildFinalizeCommand(config, uuid, project, platform) {
   }
   parts.push('--agent ' + quoteArg(config.agentKind, platform));
   parts.push('--session-id ' + uuid);
+  // `--reopen` re-runs the session-end path over a session that already ended,
+  // for a conversation that kept going after a first finalize (#836, ai-memory
+  // 2.5.0). Without it that second half is lost forever: the page was built from
+  // half the content and a session that ended is invisible to a plain finalize,
+  // which answers "No open ... sessions matched". See `pump()` for when this is
+  // allowed — it is used for exactly one case, a session THIS plugin finalized
+  // earlier, never as a bulk retry.
+  if (reopen) parts.push('--reopen');
 
   return parts.join(' ');
 }
@@ -355,7 +363,9 @@ function scopeForDir(dir) {
   }
   for (;;) {
     const marker = readMarkerScope(join(current, '.ai-memory.toml'));
-    if (marker !== null) return { root: current, project: marker.project, workspace: marker.workspace };
+    if (marker !== null) {
+      return { root: current, project: marker.project, workspace: marker.workspace, identity: marker.identity };
+    }
     try {
       if (existsSync(join(current, '.git'))) return null;
     } catch (e) {
@@ -383,6 +393,7 @@ function readMarkerScope(markerFile) {
   }
   let project = '';
   let workspace = '';
+  let identity = '';
   let inProject = false;
   const lines = String(text).split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
@@ -409,9 +420,55 @@ function readMarkerScope(markerFile) {
     }
     if (key === 'project') project = value.trim();
     else if (key === 'workspace') workspace = value.trim();
+    // `identity` pins the repository identity a checkout's captures route by and
+    // OUTRANKS `project` (ai-memory 2.5.0, #708). A marker that declares only
+    // `identity` is therefore valid, which is why the emptiness test below
+    // accepts either key.
+    else if (key === 'identity') identity = value.trim();
   }
-  if (project.length === 0) return null;
-  return { project: project, workspace: workspace };
+  if (project.length === 0 && identity.length === 0) return null;
+  return { project: project, workspace: workspace, identity: identity };
+}
+
+/**
+ * Which project NAME owns a repository identity?
+ *
+ * ai-memory 2.5.0 gave every project an `identity` that is deliberately not its
+ * folder name (#708), and routes captures by it. Which name owns an identity is
+ * decided by the SERVER on first sighting — the first checkout to claim it keeps
+ * its folder-derived name, and only a later, differently-named clone of the same
+ * repository is named after its owner (e.g. `orgb-api`). Reproducing that rule
+ * here would mean guessing it, and guessing is what produced the 1.0.4 bug in
+ * the first place.
+ *
+ * It does not have to be guessed: migration V70 stores the answer in
+ * `projects.identity`, so the exact name can be read straight back. One indexed
+ * lookup (`idx_projects_identity`), read-only, and silent — any failure returns
+ * '' and the caller falls back to the folder name exactly as before.
+ */
+function projectForIdentity(identity, binPath) {
+  if (typeof identity !== 'string' || identity.length === 0) return '';
+  let sqlite;
+  try {
+    sqlite = process.getBuiltinModule('node:sqlite');
+  } catch (e) {
+    return '';
+  }
+  if (!sqlite || typeof sqlite.DatabaseSync !== 'function') return '';
+  let db;
+  try {
+    db = new sqlite.DatabaseSync(binPath, { readOnly: true });
+    try {
+      const row = db.prepare(
+        'SELECT name FROM projects WHERE identity <> \'\' AND lower(identity) = lower(?) LIMIT 1'
+      ).get(identity);
+      return row && row.name ? String(row.name) : '';
+    } finally {
+      db.close();
+    }
+  } catch (e) {
+    return '';
+  }
 }
 
 // ── Plugin ──────────────────────────────────────────────────────────────────
@@ -453,11 +510,43 @@ function apply(ctx, rawConfig) {
   // Sessions waiting to be finalized (see `pump`).
   const queue = [];
 
-  // UUIDs already finalized in this process. Prevents a second CLI call when
-  // `session/disposed` and `agent/disposed` both fire for the same session —
-  // which they do, in that order. One entry per closed session; discarded with
-  // the plugin, so it does not grow over the process lifetime.
-  const finalizedRecently = new Set();
+  // UUID -> the moment WE last finalized it, in this process.
+  //
+  // A plain Set used to be enough: its only job was to stop the same session
+  // being finalized twice by two events that describe ONE end (Bug 1). It is a
+  // Map now because "already finalized" stopped being the same question as
+  // "already finalized just now". Since ai-memory 2.5.0 a session that carried
+  // on after a finalize can be finalized AGAIN with `--reopen` (#836), and that
+  // is precisely what rescues a session the sweeper closed while it was still
+  // alive — its page was built from the first half and would otherwise never be
+  // updated.
+  //
+  // The two cases are told apart by TIME, and they are far apart: events for one
+  // end arrive within milliseconds of each other, a genuinely new end arrives
+  // minutes or hours later.
+  //
+  // Trade-off, stated plainly: a session that ends twice inside this window gets
+  // only the first finalize. 60 s is far wider than the millisecond race the
+  // dedup exists for, and a DSH session cannot end and be resumed that fast.
+  // Overridable so the behaviour can be tested without waiting a minute, and
+  // because an operator whose harness ends sessions unusually fast may need a
+  // different window. Read once, at load.
+  const DEDUP_WINDOW_MS = (function () {
+    const raw = Number(process.env.AI_MEMORY_DEDUP_WINDOW_MS);
+    return Number.isFinite(raw) && raw >= 0 ? raw : 60_000;
+  })();
+  const finalizedRecently = new Map();
+
+  /** Did WE finalize `uuid` a moment ago — i.e. is this the second event of one end? */
+  function finalizedJustNow(uuid) {
+    const at = finalizedRecently.get(uuid);
+    return at !== undefined && (Date.now() - at) < DEDUP_WINDOW_MS;
+  }
+
+  /** Remember that we finalized `uuid`, and when. */
+  function rememberFinalized(uuid) {
+    finalizedRecently.set(uuid, Date.now());
+  }
 
   // Project hints for UUIDs that arrive from the sweeper. Those sessions have no
   // agent left, so their cwd can no longer be asked for.
@@ -580,8 +669,8 @@ function apply(ctx, rawConfig) {
     return k === 3221225794 || k === -1073741502; // 0xC0000142, unsigned/signed
   }
 
-  function runFinalize(uuid, workdir, project) {
-    const command = buildFinalizeCommand(config, uuid, project, platform);
+  function runFinalize(uuid, workdir, project, reopen) {
+    const command = buildFinalizeCommand(config, uuid, project, platform, reopen);
     const request = { command: command, timeoutMs: config.timeoutMs, env: ENV_FINALIZE };
     // `workdir` is only attached when the directory really exists.
     //
@@ -655,7 +744,7 @@ function apply(ctx, rawConfig) {
     }
     // `session/disposed` usually handles this session first. Do not call the CLI
     // twice for the same session.
-    if (uuidForCheck && finalizedRecently.has(uuidForCheck)) {
+    if (uuidForCheck && finalizedJustNow(uuidForCheck)) {
       console.log(LOG + 'skipping ' + shortLabel(id) + ' (already finalized on the fast path)');
       return;
     }
@@ -717,7 +806,7 @@ function apply(ctx, rawConfig) {
       return;
     }
 
-    if (finalizedRecently.has(uuid)) return;
+    if (finalizedJustNow(uuid)) return;
 
     const project = cwd ? basename(cwd).toLowerCase() : '';
     sweepProjects.set(uuid, { project: project, workdir: cwd });
@@ -784,7 +873,7 @@ function apply(ctx, rawConfig) {
     // the queue, so the duplicate always arrives as a `hinted` item — an
     // earlier version of this fix excluded those and therefore caught nothing.
     // Caught by the functional test, not by reading the code.
-    if (finalizedRecently.has(uuid)) {
+    if (finalizedJustNow(uuid)) {
       running = false;
       console.log(LOG + 'skipping ' + shortLabel(uuid) + ' (already finalized)');
       pump();
@@ -822,9 +911,19 @@ function apply(ctx, rawConfig) {
     // finalizes instead of being retried on every sweep.
     const scope = scopeForDir(workdir);
     const attempts = [];
+
+    // An `identity` in the marker OUTRANKS `project` (#708), and the name that
+    // owns an identity is the server's decision, not a rule we can reproduce —
+    // so it is read back from the store instead of guessed. Tried first, because
+    // it is the most specific thing the marker told us.
+    const identityProject = scope !== null && scope.identity
+      ? projectForIdentity(scope.identity, config.binPath)
+      : '';
+
     if (scope !== null && scope.root !== workdir && dirExists(scope.root)) {
+      if (identityProject) attempts.push({ workdir: scope.root, project: identityProject });
       attempts.push({ workdir: scope.root, project: '' });
-      attempts.push({ workdir: scope.root, project: scope.project });
+      if (scope.project) attempts.push({ workdir: scope.root, project: scope.project });
     }
     attempts.push({ workdir: workdir, project: '' });
     const fallbackProject = scope !== null ? scope.project : project;
@@ -836,7 +935,7 @@ function apply(ctx, rawConfig) {
     // Stop at the FIRST success. "No open ... sessions matched" means "not in
     // this project", so the next candidate is tried. Any other failure is
     // terminal: retrying it would only spend more CLI processes on one error.
-    function tryAttempt(i, lastResult, lastOut) {
+    function tryAttempt(i, lastResult, lastOut, reopened) {
       if (i >= attempts.length) {
         return Promise.resolve({ stage: 'exhausted', out: lastOut, result: lastResult, project: '' });
       }
@@ -846,7 +945,27 @@ function apply(ctx, rawConfig) {
         if (/Finalized/i.test(out)) {
           return { stage: k.project ? 'fallback' : 'marker', out: out, result: r, project: k.project };
         }
-        if (/No open .* sessions matched/i.test(out)) return tryAttempt(i + 1, r, out);
+        if (/No open .* sessions matched/i.test(out)) {
+          // The session has already ended. If WE ended it — the sweeper closing a
+          // session it wrongly believed abandoned — then everything the agent did
+          // afterwards is still unsummarized, and a plain finalize can never pick
+          // it up. `--reopen` is the only route back (#836, ai-memory 2.5.0).
+          //
+          // Deliberately narrow: once per pump, for this candidate, and only for
+          // a session this process has already finalized. Never a bulk retry, and
+          // re-running with nothing new is a documented no-op — which is also why
+          // a session another harness ended is harmless here.
+          if (!reopened && finalizedRecently.has(uuid) && k.project) {
+            return runFinalize(uuid, k.workdir, k.project, true).then(function (r2) {
+              const out2 = outputOf(r2);
+              if (/Finalized/i.test(out2)) {
+                return { stage: 'reopened', out: out2, result: r2, project: k.project };
+              }
+              return tryAttempt(i + 1, r, out, true);
+            });
+          }
+          return tryAttempt(i + 1, r, out, reopened);
+        }
         return { stage: 'marker', out: out, result: r, project: k.project };
       });
     }
@@ -858,16 +977,17 @@ function apply(ctx, rawConfig) {
           done++;
           // Remember, so `session/disposed` + `agent/disposed` for the same
           // session do not call the CLI twice.
-          finalizedRecently.add(uuid);
+          rememberFinalized(uuid);
           console.log(
             LOG + 'session ' + short + ' -> page created' +
             (f.stage === 'fallback' ? ' (via --project ' + f.project + ')' : '') +
+            (f.stage === 'reopened' ? ' (reopened with --project ' + f.project + ')' : '') +
             ' (exit=' + String(f.result && f.result.exitCode) + ', created total: ' + done + ')'
           );
         } else if (/No open .* sessions matched/i.test(f.out)) {
           // Already finalized (e.g. by another path). Record that too, so it is
           // not retried.
-          finalizedRecently.add(uuid);
+          rememberFinalized(uuid);
           console.log(LOG + 'session ' + short + ' -> no open session matched (already finalized?)');
         } else {
           failed++;

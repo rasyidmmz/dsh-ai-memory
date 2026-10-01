@@ -16,7 +16,8 @@ proof it works — 1.0.1 did exactly that while finalizing nothing.
 
 | Plugin | DSH Desktop | ai-memory | Notes |
 |---|---|---|---|
-| 1.0.5 | 0.2.0-rc.2 | 2.4.2 | Current. Log line reads its version from `package.json`. |
+| 1.1.0 | 0.2.0-rc.2 | 2.5.2 | Current. Honours a marker's `identity`; re-finalizes a session that continued after one finalize. |
+| 1.0.5 | 0.2.0-rc.2 | 2.4.2 | Log line reads its version from `package.json`. |
 | 1.0.4 | 0.2.0-rc.2 | 2.4.2 | Sessions opened in a subfolder finalize into the project root. **Its startup log says `active v1.0.3`** — see 1.0.5. |
 | 1.0.3 | 0.1.7-rc.2 | 2.4.1 | Documentation only — no code change. |
 | 1.0.2 | 0.1.7-rc.2 | 2.4.1 | Verified working. |
@@ -28,6 +29,58 @@ convention by capability (`typeof ctx.shell.execute`), not by version number, so
 it works on both old and new hosts.
 
 ---
+
+## [1.1.0] - 1 Oct 2026
+
+Built against **ai-memory 2.5.2**. Two changes, both driven by that release.
+
+### Added
+
+- **A marker's `identity` is honoured.** ai-memory 2.5.0 gave every project an
+  `identity` that is deliberately not its folder name (#708) and routes captures
+  by it; `identity` in `.ai-memory.toml` outranks `project`, and a marker that
+  declares only `identity` is valid.
+
+  The plugin does not try to reproduce the naming rule — which name owns an
+  identity is the SERVER's decision on first sighting, and guessing it is what
+  caused the 1.0.4 bug. It reads the answer back out of `projects.identity`
+  (migration V70) with one indexed lookup, and falls back to the folder name
+  when there is no answer. Read-only; any failure is silent.
+
+- **A session that continued after a finalize can be re-finalized.** ai-memory
+  2.5.0 added `finalize-session --reopen` (#836). This matters for one concrete
+  failure the plugin could otherwise cause and not repair: the **sweeper**
+  closing a session it wrongly judged abandoned. Its page was then built from
+  the first half, and because the session had ended, no later finalize could
+  ever update it — everything the agent did afterwards was lost.
+
+  `--reopen` is now used for exactly that case: once per session, only for a
+  session this process already finalized, and only after a plain finalize
+  answers `No open ... sessions matched`. Re-running with nothing new is a
+  documented no-op, so the case where another harness ended the session is
+  harmless.
+
+### Changed
+
+- **"Already finalized" is now a question about time, not a flag.** The guard
+  that stops two events describing one session end from finalizing twice
+  (Bug 1) was a set, which cannot tell "the second event of one end" from "a
+  genuinely new end hours later". It is a timestamped map with a 60-second
+  window, and only a finalize outside that window is allowed to reopen.
+
+  Stated plainly: a session that ends twice inside those 60 seconds gets only
+  the first finalize. The window is far wider than the millisecond race the
+  guard exists for, and can be overridden with `AI_MEMORY_DEDUP_WINDOW_MS`.
+
+### Verified
+
+- New suite `uji-fitur-1.1.0.mjs`: **6/6** on the published source, **5/5** on
+  the local variant (one assertion is skipped there, with the reason printed —
+  that variant reads a fixed database path and cannot take an injected one).
+  Against 1.0.5 the same suite scores **2/6**, which is how the new behaviour is
+  shown to be what makes it pass.
+- Existing behaviour suite **19/19**; parity between the variants **SEPADAN**
+  (18 compared units).
 
 ## [1.0.5] - 1 Oct 2026
 
