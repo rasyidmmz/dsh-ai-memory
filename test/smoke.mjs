@@ -129,6 +129,56 @@ emit('agent/disposed', { agent: { id: SUB_SESSION } });
 await wait(150);
 check('subagent tidak difinalisasi', () => assert.equal(executed.length, 1));
 
+// ── Onboarding diagnosis (what a marketplace user needs to be told) ─────────
+const { mkdtempSync, mkdirSync, writeFileSync } = await import('node:fs');
+const { tmpdir } = await import('node:os');
+const { join } = await import('node:path');
+
+const fakeHome = mkdtempSync(join(tmpdir(), 'dsh-ai-memory-test-'));
+const profileDir = join(fakeHome, 'profiles', 'desktop');
+mkdirSync(profileDir, { recursive: true });
+process.env.DSH_HOME = fakeHome;
+process.env.DSH_PROFILE = 'desktop';
+
+check('harnessScope membaca DSH_HOME/DSH_PROFILE', () => {
+  const scope = plugin.harnessScope();
+  assert.equal(scope.home, fakeHome);
+  assert.equal(scope.profile, 'desktop');
+});
+
+check('hookWiringStatus: patch tanpa bridge = belum wired', () => {
+  writeFileSync(join(profileDir, 'cordis.patch.yml'), '- id: ui-chat\n');
+  assert.equal(plugin.hookWiringStatus(plugin.harnessScope()).wired, false);
+});
+
+check('hookWiringStatus: patch dengan bridge = wired', () => {
+  writeFileSync(join(profileDir, 'cordis.patch.yml'), "- name: '@deepseek-ai/dsh-hooks-claude-code'\n");
+  assert.equal(plugin.hookWiringStatus(plugin.harnessScope()).wired, true);
+});
+
+check('diagnose: menyebut install ai-memory + hook belum ter-wire', () => {
+  writeFileSync(join(profileDir, 'cordis.patch.yml'), '- id: ui-chat\n');
+  const lines = plugin.diagnoseEnvironment(
+    { exePath: join(fakeHome, 'nope', 'ai-memory.exe'), resolvedDataDir: join(fakeHome, 'nope-data') },
+    'win32',
+  );
+  const text = lines.join('\n');
+  assert.match(text, /https:\/\/github\.com\/akitaonrails\/ai-memory#install/);
+  assert.match(text, /capture hooks are NOT wired/);
+  assert.match(text, /hooks-dsh\.json/);
+});
+
+check('diagnose: bersih saat semuanya ada', () => {
+  const exe = join(fakeHome, 'bin', 'ai-memory.exe');
+  const data = join(fakeHome, 'data');
+  mkdirSync(join(fakeHome, 'bin'), { recursive: true });
+  mkdirSync(data, { recursive: true });
+  writeFileSync(exe, '');
+  writeFileSync(join(data, 'config.toml'), '');
+  writeFileSync(join(profileDir, 'cordis.patch.yml'), "- name: '@deepseek-ai/dsh-hooks-claude-code'\n");
+  assert.deepEqual(plugin.diagnoseEnvironment({ exePath: exe, resolvedDataDir: data }, 'win32'), []);
+});
+
 console.log = realLog;
 
 const failed = checks.filter((c) => !c.ok);

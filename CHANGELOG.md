@@ -16,6 +16,7 @@ proof it works — 1.0.1 did exactly that while finalizing nothing.
 
 | Plugin | DSH Desktop | ai-memory | Notes |
 |---|---|---|---|
+| 1.2.0 | 0.2.1-rc.2 | 3.1.1 | Marketplace readiness: startup diagnosis when ai-memory or the capture hooks are missing. |
 | 1.1.2 | 0.2.1-rc.2 | 3.1.1 | Compatibility re-verified against current hosts; no behaviour change. |
 | 1.1.1 | 0.2.0-rc.2 | 2.5.2 | Makes the marker's `identity` actually work in the common case. |
 | 1.1.0 | 0.2.0-rc.2 | 2.5.2 | Honours a marker's `identity`; re-finalizes a session that continued. **Its `identity` support never ran when the marker sits in the session's own folder** — see 1.1.1. |
@@ -31,6 +32,39 @@ convention by capability (`typeof ctx.shell.execute`), not by version number, so
 it works on both old and new hosts.
 
 ---
+
+## [1.2.0] - 18 Oct 2026
+
+Marketplace readiness: the plugin now tells a new user what is missing instead of
+loading quietly and finalizing nothing. The finalize path itself is untouched.
+
+### Added
+
+- **A startup diagnosis for the two things this package cannot install.** At boot
+  it checks that (a) the configured `ai-memory` binary exists, (b) its data
+  directory with `config.toml` exists, and (c) the running DSH profile actually
+  wires the capture hooks (`@deepseek-ai/dsh-hooks-claude-code` in the profile's
+  or the home-level `cordis.patch.yml`). Each miss prints one concrete next step —
+  the upstream install link, `ai-memory init`, or the absolute path to the
+  shipped `docs/hooks-dsh.json` template. The third check covers the failure that
+  matters most after a marketplace install: ai-memory installed, DSH hooks not
+  wired, so no session is ever captured and there is nothing to finalize.
+- The "server did not answer" line now also says how to start one.
+- `harnessScope`, `hookWiringStatus` and `diagnoseEnvironment` are exported so the
+  diagnosis is testable without a harness. `npm test` is now 16 checks, including
+  the clean case (no output when everything is in place).
+
+### Changed
+
+- README gains "From the DSH marketplace": the two external prerequisites, and
+  why the plugin refuses to write the profile patch itself — the desktop profile
+  reloads that file live, and a second hooks row beside an existing one would
+  capture every session twice.
+
+### Not changed
+
+- The finalize invocation, the event set, the sweeper and the uuid mapping are
+  untouched since 1.1.1. This release only adds diagnosis and documentation.
 
 ## [1.1.2] - 18 Oct 2026
 

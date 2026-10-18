@@ -34,7 +34,7 @@ import { createHash } from 'node:crypto';
 import { basename, dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { Buffer } from 'node:buffer';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 // ── Constants ───────────────────────────────────────────────────────────────
@@ -488,6 +488,96 @@ function projectForIdentity(identity, binPath) {
   } catch (e) {
     return '';
   }
+}
+
+// ── What a NEW user needs to know ───────────────────────────────────────────
+//
+// The plugin is installable from a marketplace in one click, but it cannot work
+// on its own: ai-memory must be installed and running, and DSH must have the
+// capture hooks wired or there is nothing to finalize. Both are outside this
+// package, so the honest thing is to say so — once, in the log, with the exact
+// next step — instead of looking "loaded but idle" while the user wonders why.
+//
+// All of this is READ-ONLY. Writing the profile patch from here would be wrong:
+// it is live-reloaded on the desktop profile, and a second hooks row next to a
+// user's own would capture every session twice.
+
+/** Resolve the Harness home and the profile this process belongs to. */
+function harnessScope() {
+  const home = process.env.DSH_HOME || join(homedir(), '.dsh');
+  const profile = process.env.DSH_PROFILE || '';
+  return { home, profile };
+}
+
+/**
+ * Is the Claude Code hooks bridge wired anywhere this profile loads?
+ *
+ * Reads the per-profile patch and the home-level patch (which outranks it).
+ * With no DSH_PROFILE in the environment, any profile that wires the bridge
+ * counts — the process cannot always know which profile it was launched from.
+ */
+function hookWiringStatus(scope) {
+  const { home, profile } = scope;
+  const patches = [];
+  if (profile) patches.push(join(home, 'profiles', profile, 'cordis.patch.yml'));
+  else {
+    try {
+      for (const entry of readdirSync(join(home, 'profiles'))) {
+        patches.push(join(home, 'profiles', entry, 'cordis.patch.yml'));
+      }
+    } catch (e) {
+      /* no profiles directory: nothing to scan */
+    }
+  }
+  patches.push(join(home, 'cordis.patch.yml'));
+
+  const found = [];
+  for (const patch of patches) {
+    try {
+      const text = readFileSync(patch, 'utf8');
+      if (text.includes('dsh-hooks-claude-code')) found.push(patch);
+    } catch (e) {
+      /* absent is the common case, not an error */
+    }
+  }
+  return { wired: found.length > 0, where: found, patches };
+}
+
+/**
+ * Lines to print at startup describing what is missing, if anything.
+ * Empty when everything the plugin needs is in place.
+ */
+function diagnoseEnvironment(config, platform) {
+  const lines = [];
+
+  // 1. The CLI this plugin shells out to.
+  const looksLikePath = config.exePath.includes('/') || config.exePath.includes('\\');
+  if (looksLikePath && !existsSync(config.exePath)) {
+    lines.push('preflight: ai-memory is not installed at ' + config.exePath);
+    lines.push('preflight:   install it first: https://github.com/akitaonrails/ai-memory#install');
+    lines.push('preflight:   or set config.exePath to wherever it lives; nothing can be finalized until then');
+  }
+
+  // 2. Its data directory / config.
+  const configFile = join(config.resolvedDataDir, 'config.toml');
+  if (!existsSync(configFile)) {
+    lines.push('preflight: no ai-memory data directory at ' + config.resolvedDataDir);
+    lines.push('preflight:   run `ai-memory init` once (the server does it too on first start)');
+  }
+
+  // 3. The capture side. Without hooks, DSH never sends ai-memory anything.
+  const scope = harnessScope();
+  const wiring = hookWiringStatus(scope);
+  if (!wiring.wired) {
+    const template = join(dirname(fileURLToPath(import.meta.url)), 'docs', 'hooks-dsh.json');
+    lines.push('preflight: DSH capture hooks are NOT wired for profile "' + (scope.profile || '(unknown)') + '"');
+    lines.push('preflight:   ai-memory will record no DSH sessions, so this plugin has nothing to finalize.');
+    lines.push('preflight:   reference hook config shipped here: ' + template);
+    lines.push('preflight:   add it as an `insert:` row in that profile\'s cordis.patch.yml, then restart DSH');
+    lines.push('preflight:   (README: "Wire capture" — it takes one row and one restart)');
+  }
+
+  return lines;
 }
 
 // ── Plugin ──────────────────────────────────────────────────────────────────
@@ -1226,6 +1316,15 @@ function apply(ctx, rawConfig) {
   //
   // Never throws and never blocks; it only writes to the log.
   if (config.preflight) {
+    // Say what is missing BEFORE asking the server: a new user who installed
+    // this from a marketplace usually has neither ai-memory nor the capture
+    // hooks, and "the server did not answer" alone does not tell them that.
+    try {
+      for (const line of diagnoseEnvironment(config, platform)) console.log(LOG + line);
+    } catch (e) {
+      console.log(LOG + 'preflight: diagnosis skipped: ' + String((e && e.message) || e));
+    }
+
     const command = buildStatusCommand(config, platform);
     Promise.resolve()
       .then(function () {
@@ -1243,6 +1342,8 @@ function apply(ctx, rawConfig) {
         if (start < 0 || end <= start) {
           console.log(LOG + 'preflight: the ai-memory server did not answer `status`. ' +
             'Without a running server this plugin cannot finalize any session.');
+          console.log(LOG + 'preflight:   start it with `ai-memory serve --transport http` (or its Windows service), ' +
+            'then restart DSH');
           return;
         }
         let info;
@@ -1273,4 +1374,4 @@ function apply(ctx, rawConfig) {
   }
 }
 
-export { name, inject, apply };
+export { name, inject, apply, diagnoseEnvironment, hookWiringStatus, harnessScope };

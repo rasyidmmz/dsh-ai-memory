@@ -125,12 +125,37 @@ so an edited or newly added plugin is not picked up until the process restarts.
 Confirm it loaded by searching the harness log for `ai-memory`:
 
 ```
-[dsh-ai-memory] active v1.1.0 -- fast path session/disposed (zero idle cost) + ...
-[dsh-ai-memory] preflight: ai-memory v2.5.2 | data_dir=... | server=127.0.0.1:49374
+[dsh-ai-memory] active v1.2.0 -- fast path session/disposed (zero idle cost) + ...
+[dsh-ai-memory] preflight: ai-memory v3.1.1 | data_dir=... | server=127.0.0.1:49374
 ```
 
 The preflight line is the fastest way to confirm the plugin found the same
 ai-memory your hooks are writing to.
+
+### From the DSH marketplace — the half this plugin does not bring
+
+Installing from a marketplace gives you the **finalize** half in one row. Two
+things are still yours to provide, and the startup log now names whichever one
+is missing instead of looking merely idle:
+
+1. **ai-memory itself.** The plugin shells out to the `ai-memory` binary; it does
+   not bundle or install it. When the binary is missing the log says so, with the
+   install link and the `exePath` key that overrides the expected location, and
+   nothing is finalized until it appears.
+2. **Capture hooks.** ai-memory only knows about a DSH session if DSH forwards
+   lifecycle events to it. That wiring is one `insert:` row in the profile's
+   `cordis.patch.yml` pointing `@deepseek-ai/dsh-hooks-claude-code` at a hooks
+   file; the reference file ships in this package as
+   [`docs/hooks-dsh.json`](docs/hooks-dsh.json). Without it ai-memory records no
+   DSH sessions at all — so there is nothing to finalize, and the log says
+   exactly that, with the path to that template.
+
+   The plugin deliberately does **not** write that row for you. The desktop
+   profile reloads `cordis.patch.yml` live, so writing it from inside a running
+   harness is how people hang their app; and a second hooks row sitting next to
+   one you already have would capture every session twice.
+
+When both are in place, the preflight is one line and the rest is silent.
 
 ## Configuration
 

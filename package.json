@@ -1,7 +1,7 @@
 {
   "name": "dsh-ai-memory",
   "description": "Closes ai-memory's consolidation loop for DSH: when a DSH session ends, calls ai-memory finalize-session so its captured observations become searchable wiki pages the other harnesses ai-memory serves can retrieve. Skips subagents, queues concurrent session ends, and sweeps sessions abandoned by a forced restart.",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "license": "MIT",
   "type": "module",
   "main": "index.mjs",
