@@ -11,6 +11,20 @@
 // It calls the `ai-memory` CLI. It does not read ai-memory's source, does not
 // bundle it, and shares no code with it. See README "Credits".
 //
+// RE-VERIFIED 2026-10-18 against DSH 0.2.1-rc.2 and ai-memory 3.1.1:
+//   - the three DSH events this plugin listens to (`agent/created`,
+//     `agent/disposed`, `session/disposed`) are still emitted by dsh-agent /
+//     dsh-agent-loop in the installed app.asar;
+//   - `finalize-session` still takes --agent/--workspace/--project/
+//     --session-id/--reopen/--json, and its success/failure lines are still
+//     "Finalized …" / "No open … sessions matched …" (checked in
+//     crates/ai-memory-cli/src/commands/finalize_session.rs at v3.1.1);
+//   - session ids are still uuid5(NAMESPACE_OID, native id) (ids.rs:94), which
+//     is the mapping `sessionIdToUuid` below reproduces;
+//   - a 2.6-era store still opens under 3.1.1 (migrated to schema V83; the
+//     sweeper query returns rows unchanged).
+// No behaviour changed in this release; see CHANGELOG 1.1.2.
+//
 // DESIGN RULE: event first, schedule second.
 // The primary path is an event listener, which costs nothing while idle. The
 // sweeper is a safety net for the one case no event covers — DSH killed by
@@ -72,12 +86,17 @@ const OID_NS = '6ba7b812-9dad-11d1-80b4-00c04fd430c8';
 
 // The agent kind recorded in ai-memory's store for every DSH session.
 //
-// NOT A FREE CHOICE. ai-memory recognises a fixed set of agent kinds
-// (claude-code, codex, cursor, open-code, opencode2, pi, omp, zero, kiro-cli,
-// pool, zcode) and rejects anything else: `--agent dsh` fails with "invalid
-// value 'dsh'". DSH reaches ai-memory through the Claude Code hook bridge, so
-// `claude-code` is the correct and only workable value. Verified: all 26 stored
-// sessions carry agent_kind = claude-code.
+// NOT A FREE CHOICE. ai-memory recognises a fixed set of agent kinds — 27 at
+// 3.1.1: claude-code, codex, open-code, cursor, gemini-cli, claude-desktop,
+// openclaw, antigravity-cli, omp, pi, crush, grok, zero, devin, kimi-code,
+// kiro-cli, command-code, hermes, pool, zcode, copilot-cli, grizzybot, droid,
+// muse, codebuddy, ibm-bob, other. Anything else is rejected: `--agent dsh`
+// fails with "invalid value 'dsh'". Re-checked against
+// crates/ai-memory-core/src/ids.rs at v3.1.1 (2026-10-18): STILL no DSH
+// variant, and `other` is an internal catch-all rather than a wire name the CLI
+// accepts. DSH reaches ai-memory through the Claude Code hook bridge, so
+// `claude-code` is the correct and only workable value. Verified: every stored
+// DSH session carries agent_kind = claude-code.
 //
 // The CLI's OWN default is `codex`, not `claude-code`, so this flag must always
 // be passed explicitly.
@@ -618,8 +637,12 @@ function apply(ctx, rawConfig) {
 
   // ── Tolerate TWO shapes of the `ctx.shell` service ────────────────────────
   //
-  //   older harness : shell.run(spec)     -> { exitCode, stdout, stderr }
-  //   DSH 0.1.7-rc.2: shell.execute(spec) -> handle, then handle.result()
+  //   older harness  : shell.run(spec)     -> { exitCode, stdout, stderr }
+  //   DSH 0.1.7-rc.2+: shell.execute(spec) -> handle, then handle.result()
+  //
+  // Re-checked on 0.2.1-rc.2 (2026-10-18) from the installed app.asar: still
+  // exactly these two shapes, and the mounted Windows executor still exposes
+  // only `execute()`.
   //
   // Measured from the app.asar that actually runs: `PwshLocalExecutor` exposes
   // only `execute()` and no longer `run()`. Without this branch EVERY finalize
@@ -654,9 +677,11 @@ function apply(ctx, rawConfig) {
   //   "DeepSeek Harness.exe"  + sandbox runner -> exit=3221225794  (0xC0000142)
   //
   // DSH 0.1.7-rc.2 launches that runner through Electron, and the confined child
-  // process dies with STATUS_DLL_INIT_FAILED. So `ctx.shell` calls from a plugin
-  // (which has no session, and therefore falls back to the default
-  // `workspace-write` policy) always take the broken path.
+  // process dies with STATUS_DLL_INIT_FAILED. Still reproduced on 0.2.1-rc.2
+  // (2026-10-18): every child under `workspace-write` dies 0xC0000142 while
+  // `read-only` runs, so the workaround below is still required. So `ctx.shell`
+  // calls from a plugin (which has no session, and therefore fall back to the
+  // default `workspace-write` policy) always take the broken path.
   //
   // `pwsh-sandbox.execute()` skips confinement entirely when the policy mode is
   // 'danger-full-access', so the broken runner is never used. Design: try the

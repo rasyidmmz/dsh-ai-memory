@@ -275,20 +275,37 @@ If nothing appears at all, the plugin is not loaded — check the profile's
 
 ## Compatibility
 
-- **DSH**: developed and tested against DSH Desktop **`0.2.0-rc.2`**
-  (the `@deepseek-ai/dsh-desktop` package), Node 24. 1.0.4 was verified here.
+- **DSH**: developed and tested against DSH Desktop **`0.2.1-rc.2`**
+  (the `@deepseek-ai/dsh-desktop` package), Node 24. Re-verified on 0.2.1-rc.2
+  on 2026-10-18 from the installed `app.asar`: `agent/created`,
+  `agent/disposed` and `session/disposed` are still emitted, `ctx.sessions.get()`
+  still returns a session whose `header` carries `cwd`, `origin` and
+  `delegationDepth`, and `ctx.shell` still exposes `execute()` only (the
+  `run()`-then-`execute()` capability branch below covers both). 1.0.4 and
+  1.1.1 were verified on `0.2.0-rc.2`.
 
   > Earlier revisions of this README said "DSH Desktop 0.9.1". That was wrong —
   > no such DSH version exists. `0.9.1` had been read off an unrelated
-  > changelog; the package version at the time was `0.1.7-rc.2`. It is
-  > `0.2.0-rc.2` now, and earlier versions (1.0.0-1.0.3) were tested on
-  > `0.1.7-rc.2`.
+  > changelog; the package version at the time was `0.1.7-rc.2`. Revisions
+  > 1.0.0-1.0.3 were tested on `0.1.7-rc.2`.
 
-- **ai-memory**: developed and tested against **2.5.2** (upgraded from 2.4.0
-  through 2.5.2, each verified working end-to-end). The `finalize-session` and
-  `status` flags used here were verified present in all of them; `--reopen` and
-  the marker's `identity` key arrived in 2.5.0 and are used by 1.1.0. See the
-  compatibility note below for what the upgrades changed.
+- **ai-memory**: developed against **2.5.2** (upgraded from 2.4.0 through
+  2.5.2, each verified working end-to-end), re-verified on **3.1.1** on
+  2026-10-18. What was actually checked, not assumed:
+  - `finalize-session` still accepts `--agent`, `--workspace`, `--project`,
+    `--session-id`, `--reopen` and `--json`;
+  - its output lines are unchanged — `Finalized …` on success and
+    `No open … sessions matched …` when there is nothing to close, which is
+    what this plugin's classification reads;
+  - session ids are still `uuid5(NAMESPACE_OID, native id)`
+    (`crates/ai-memory-core/src/ids.rs:94`), the exact mapping
+    `sessionIdToUuid` reproduces;
+  - a 2.6-era store opens under 3.1.1: it migrated to schema **V83** without
+    error, and the sweeper's query returns the same rows afterwards;
+  - `status --json` still exists and still reports `version`, `data_dir` and
+    `bind`, which the startup preflight prints.
+  `--reopen` and the marker's `identity` key arrived in 2.5.0 and are used by
+  1.1.0+. See the compatibility notes below for what the upgrades changed.
 - **Platforms**: Windows is the tested platform. Linux and macOS command
   construction is implemented and exercised, but not run end-to-end by the
   author — treat those as untested.
@@ -296,6 +313,26 @@ If nothing appears at all, the plugin is not loaded — check the profile's
   build step and no `allowBuilds` approval on install.
 - **No tools, no UI.** The plugin registers no model tools and draws no
   interface. It only listens and shells out.
+
+### Upgrading the ai-memory *server* from 2.x to 3.x
+
+The CLI contract this plugin uses did not change, but the **server** may refuse
+to start after the jump, and that failure looks like the plugin's fault because
+finalize calls then fail with a connection error. Observed on the author's
+machine going 2.6.0 → 3.1.1 against a copy of the store:
+
+```
+provider not configured: no openai-oauth token found at <data-dir>\auth.json;
+run `ai-memory auth login openai-oauth`
+```
+
+2.6.0 was serving with an `openai-compat` provider configured through
+`llm_base_url` plus environment keys; 3.1.1 wants a credential file for that
+provider route. The **store migrated cleanly** (schema V83, same pages,
+sessions and observations) — so this is a provider/auth step, not data loss.
+Run the `ai-memory auth login …` command the message names (or point the config
+at a still-valid `api_key_env`) before restarting the service, then check
+`ai-memory status` again.
 
 ### ai-memory 2.4.0 → 2.4.1
 

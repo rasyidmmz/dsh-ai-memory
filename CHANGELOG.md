@@ -16,7 +16,8 @@ proof it works — 1.0.1 did exactly that while finalizing nothing.
 
 | Plugin | DSH Desktop | ai-memory | Notes |
 |---|---|---|---|
-| 1.1.1 | 0.2.0-rc.2 | 2.5.2 | Current. Makes the marker's `identity` actually work in the common case. |
+| 1.1.2 | 0.2.1-rc.2 | 3.1.1 | Compatibility re-verified against current hosts; no behaviour change. |
+| 1.1.1 | 0.2.0-rc.2 | 2.5.2 | Makes the marker's `identity` actually work in the common case. |
 | 1.1.0 | 0.2.0-rc.2 | 2.5.2 | Honours a marker's `identity`; re-finalizes a session that continued. **Its `identity` support never ran when the marker sits in the session's own folder** — see 1.1.1. |
 | 1.0.5 | 0.2.0-rc.2 | 2.4.2 | Log line reads its version from `package.json`. |
 | 1.0.4 | 0.2.0-rc.2 | 2.4.2 | Sessions opened in a subfolder finalize into the project root. **Its startup log says `active v1.0.3`** — see 1.0.5. |
@@ -30,6 +31,50 @@ convention by capability (`typeof ctx.shell.execute`), not by version number, so
 it works on both old and new hosts.
 
 ---
+
+## [1.1.2] - 18 Oct 2026
+
+Compatibility re-verification against the hosts that actually run today.
+**No behaviour change** — every code path is untouched; what changed is what is
+proven, and the reference hook config that ships beside the plugin.
+
+### Verified
+
+- **DSH 0.2.1-rc.2**, read from the installed `app.asar`: `agent/created`,
+  `agent/disposed` and `session/disposed` are still emitted by `dsh-agent` /
+  `dsh-agent-loop`; `ctx.sessions.get().header` still carries `cwd`, `origin`
+  and `delegationDepth`; and `ctx.shell` still exposes `execute()` only — the
+  shape the existing capability branch already selects. The events the plugin
+  listens to are therefore unchanged, not merely assumed.
+- **ai-memory 3.1.1**, read from the v3.1.1 tag and exercised as a binary:
+  `finalize-session` still takes `--agent`, `--workspace`, `--project`,
+  `--session-id`, `--reopen` and `--json`, and still prints `Finalized …` on
+  success and `No open … sessions matched …` when there is nothing to close —
+  both strings are what this plugin classifies on. Session ids are still
+  `uuid5(NAMESPACE_OID, native id)` (`crates/ai-memory-core/src/ids.rs:94`), the
+  mapping `sessionIdToUuid` reproduces. `status --json` still reports `version`,
+  `data_dir` and `bind`.
+- **Store upgrade**: a copy of a 2.6-era store opened under 3.1.1 and migrated
+  to schema **V83**; the sweeper's `SELECT` returned the same rows before and
+  after. The plugin's direct-SQL safety net therefore survives the upgrade.
+- **The sandbox workaround is still required.** On 0.2.1-rc.2 every child under
+  `workspace-write` still dies `0xC0000142` while `read-only` runs, so the
+  `danger-full-access` retry stays in place.
+
+### Changed
+
+- `docs/hooks-dsh.json` now matches what actually runs, and explains why:
+  `PreToolUse` is included together with its measured cost and the note that it
+  is the first thing to delete if latency hurts; the `hook-drain` chain on
+  `Stop` is spelled out; the profile row is shown in its `insert:` form (a bare
+  `- id:` row only overrides an existing loader); and the Windows sandbox
+  failure is documented with the two working responses.
+- README compatibility section refreshed, plus a new note on upgrading the
+  **server** 2.x → 3.x: the store migrates cleanly, but 3.1.1 can refuse to
+  start until its provider credential is re-authenticated
+  (`ai-memory auth login openai-oauth`). That failure surfaces as a plugin
+  failure, because finalize then cannot reach the server — worth knowing before
+  blaming the plugin.
 
 ## [1.1.1] - 1 Oct 2026
 
