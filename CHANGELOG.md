@@ -16,6 +16,7 @@ proof it works — 1.0.1 did exactly that while finalizing nothing.
 
 | Plugin | DSH Desktop | ai-memory | Notes |
 |---|---|---|---|
+| 1.2.1 | 0.2.1-rc.2 | 3.1.1 | Declares `dsh.engines` so the marketplace can gate incompatible hosts. Metadata only. |
 | 1.2.0 | 0.2.1-rc.2 | 3.1.1 | Marketplace readiness: startup diagnosis when ai-memory or the capture hooks are missing. |
 | 1.1.2 | 0.2.1-rc.2 | 3.1.1 | Compatibility re-verified against current hosts; no behaviour change. |
 | 1.1.1 | 0.2.0-rc.2 | 2.5.2 | Makes the marker's `identity` actually work in the common case. |
@@ -32,6 +33,26 @@ convention by capability (`typeof ctx.shell.execute`), not by version number, so
 it works on both old and new hosts.
 
 ---
+
+## [1.2.1] - 18 Oct 2026
+
+Marketplace metadata only; the plugin's behaviour is unchanged from 1.2.0.
+
+### Added
+
+- **`dsh.engines`** in `package.json`: `dsh: ">=0.1.7-rc.2 <0.3.0"` and
+  `node: ">=22.5.0"`. dsh-market reads an own `engines.dsh` range as the
+  authoritative compatibility declaration, so the marketplace can now refuse an
+  install on a host this plugin was never tested against instead of failing at
+  runtime. The DSH floor is where `ctx.shell.execute()` replaced `run()`; the
+  ceiling is the 0.2.x line this release was verified on. Node's floor is where
+  `node:sqlite` (the sweeper's read-only store access) became available.
+
+### Changed
+
+- Repository description now states what the plugin actually does and that it
+  ships the capture-hook template, so a marketplace listing reads correctly
+  before the catalog entry is merged.
 
 ## [1.2.0] - 18 Oct 2026
 
