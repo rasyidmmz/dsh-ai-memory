@@ -23,7 +23,9 @@
 //     is the mapping `sessionIdToUuid` below reproduces;
 //   - a 2.6-era store still opens under 3.1.1 (migrated to schema V83; the
 //     sweeper query returns rows unchanged).
-// No behaviour changed in this release; see CHANGELOG 1.1.2.
+// Historical baseline above describes 1.1.2. In 1.3.0 the capture identity is
+// selected per stored session, supporting native DSH from ai-memory 3.2.0 while
+// retaining legacy claude-code capture. See CHANGELOG 1.3.0 for test boundaries.
 //
 // DESIGN RULE: event first, schedule second.
 // The primary path is an event listener, which costs nothing while idle. The
@@ -84,22 +86,11 @@ const SWEEP_MAX_PER_RUN = 10;
 // OID namespace for UUID v5 — the same one ai-memory uses.
 const OID_NS = '6ba7b812-9dad-11d1-80b4-00c04fd430c8';
 
-// The agent kind recorded in ai-memory's store for every DSH session.
-//
-// NOT A FREE CHOICE. ai-memory recognises a fixed set of agent kinds — 27 at
-// 3.1.1: claude-code, codex, open-code, cursor, gemini-cli, claude-desktop,
-// openclaw, antigravity-cli, omp, pi, crush, grok, zero, devin, kimi-code,
-// kiro-cli, command-code, hermes, pool, zcode, copilot-cli, grizzybot, droid,
-// muse, codebuddy, ibm-bob, other. Anything else is rejected: `--agent dsh`
-// fails with "invalid value 'dsh'". Re-checked against
-// crates/ai-memory-core/src/ids.rs at v3.1.1 (2026-10-18): STILL no DSH
-// variant, and `other` is an internal catch-all rather than a wire name the CLI
-// accepts. DSH reaches ai-memory through the Claude Code hook bridge, so
-// `claude-code` is the correct and only workable value. Verified: every stored
-// DSH session carries agent_kind = claude-code.
-//
-// The CLI's OWN default is `codex`, not `claude-code`, so this flag must always
-// be passed explicitly.
+// ai-memory >=3.2.0 supports native `dsh` capture (AgentKind::Dsh and V85).
+// The server VERSION cannot tell us how a session was captured: legacy hooks
+// keep writing `claude-code` after a server upgrade. Resolve the actual stored
+// identity per session, with the legacy capture identity as a safe fallback.
+// An explicit agentKind config remains authoritative. Never relabel old rows.
 const DEFAULT_AGENT_KIND = 'claude-code';
 
 const name = 'ai-memory';
@@ -273,6 +264,28 @@ function buildFinalizeCommand(config, uuid, project, platform, reopen) {
   if (reopen) parts.push('--reopen');
 
   return parts.join(' ');
+}
+
+// ── Stored capture identity ────────────────────────────────────────────────
+
+/** Read only the two capture identities supported by this bridge. */
+function storedAgentKind(uuid, dbPath) {
+  let db;
+  try {
+    const sqlite = process.getBuiltinModule('node:sqlite');
+    if (!sqlite || typeof sqlite.DatabaseSync !== 'function') return null;
+    db = new sqlite.DatabaseSync(dbPath, { readOnly: true });
+    const row = db.prepare('SELECT agent_kind FROM sessions WHERE id = ?')
+      .get(Buffer.from(uuid.replace(/-/g, ''), 'hex'));
+    return row && (row.agent_kind === 'dsh' || row.agent_kind === 'claude-code')
+      ? row.agent_kind : null;
+  } catch {
+    // An older Node, remote-only store, missing DB or schema must not break the
+    // fast path. Use configured capture identity (legacy by default) instead.
+    return null;
+  } finally {
+    if (db) db.close();
+  }
 }
 
 // ── Identifiers ─────────────────────────────────────────────────────────────
@@ -586,6 +599,11 @@ function apply(ctx, rawConfig) {
   const config = resolveConfig(rawConfig);
   const platform = process.platform;
 
+  // Whether the operator pinned `agentKind` themselves. An explicit choice is
+  // never overridden by automatic stored-identity lookup.
+  const agentKindPinned = (rawConfig && typeof rawConfig === 'object' &&
+    typeof rawConfig.agentKind === 'string' && rawConfig.agentKind.trim() !== '');
+
   for (const warning of config.warnings) {
     console.log(LOG + 'config: ' + warning);
   }
@@ -784,8 +802,8 @@ function apply(ctx, rawConfig) {
     return k === 3221225794 || k === -1073741502; // 0xC0000142, unsigned/signed
   }
 
-  function runFinalize(uuid, workdir, project, reopen) {
-    const command = buildFinalizeCommand(config, uuid, project, platform, reopen);
+  function runFinalize(uuid, workdir, project, reopen, agentKind) {
+    const command = buildFinalizeCommand({ ...config, agentKind }, uuid, project, platform, reopen);
     const request = { command: command, timeoutMs: config.timeoutMs, env: ENV_FINALIZE };
     // `workdir` is only attached when the directory really exists.
     //
@@ -962,6 +980,11 @@ function apply(ctx, rawConfig) {
       }
     }
 
+    // Freeze capture identity for every scope attempt and --reopen in this
+    // queue item. Never infer it from the server version or preflight timing.
+    const captureKind = agentKindPinned ? config.agentKind
+      : (hinted && hinted.agentKind) || storedAgentKind(uuid, config.binPath) || config.agentKind;
+
     // DE-DUPLICATE HERE, NOT ONLY AT ENQUEUE TIME.
     //
     // The same session reaches this queue twice through two different id
@@ -1068,7 +1091,7 @@ function apply(ctx, rawConfig) {
         return Promise.resolve({ stage: 'exhausted', out: lastOut, result: lastResult, project: '' });
       }
       const k = attempts[i];
-      return runFinalize(uuid, k.workdir, k.project).then(function (r) {
+      return runFinalize(uuid, k.workdir, k.project, false, captureKind).then(function (r) {
         const out = outputOf(r);
         if (/Finalized/i.test(out)) {
           return { stage: k.project ? 'fallback' : 'marker', out: out, result: r, project: k.project };
@@ -1084,7 +1107,7 @@ function apply(ctx, rawConfig) {
           // re-running with nothing new is a documented no-op — which is also why
           // a session another harness ended is harmless here.
           if (!reopened && finalizedRecently.has(uuid) && k.project) {
-            return runFinalize(uuid, k.workdir, k.project, true).then(function (r2) {
+            return runFinalize(uuid, k.workdir, k.project, true, captureKind).then(function (r2) {
               const out2 = outputOf(r2);
               if (/Finalized/i.test(out2)) {
                 return { stage: 'reopened', out: out2, result: r2, project: k.project };
@@ -1191,7 +1214,7 @@ function apply(ctx, rawConfig) {
       const db = new sqlite.DatabaseSync(config.binPath, { readOnly: true });
       try {
         rows = db.prepare(
-          'SELECT s.id AS sid, s.cwd AS cwd, p.name AS project, ' +
+          'SELECT s.id AS sid, s.cwd AS cwd, s.agent_kind AS agent_kind, p.name AS project, ' +
           '(SELECT MAX(o.created_at) FROM observations o WHERE o.session_id = s.id) AS last_at, ' +
           '(SELECT COUNT(*) FROM observations o WHERE o.session_id = s.id) AS obs ' +
           'FROM sessions s JOIN projects p ON p.id = s.project_id ' +
@@ -1211,6 +1234,8 @@ function apply(ctx, rawConfig) {
     const candidates = [];
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
+      // Never sweep another harness just because its id happens to be UUIDv5.
+      if (r.agent_kind !== 'dsh' && r.agent_kind !== 'claude-code') continue;
       const uuid = blobToUuid(r.sid);
       if (uuid.length === 0) continue;
 
@@ -1243,6 +1268,7 @@ function apply(ctx, rawConfig) {
         cwd: r.cwd ? String(r.cwd) : '',
         obs: Number(r.obs) || 0,
         idleMin: Math.round(idleMs / 60000),
+        agentKind: r.agent_kind,
       });
     }
 
@@ -1266,7 +1292,7 @@ function apply(ctx, rawConfig) {
       // An abandoned session has no agent left, so its cwd cannot be asked for.
       // Store the project here so `pump` uses the explicit `--project` path
       // rather than guessing from the cwd basename.
-      sweepProjects.set(c.uuid, { project: c.project, workdir: c.cwd });
+      sweepProjects.set(c.uuid, { project: c.project, workdir: c.cwd, agentKind: c.agentKind });
       queue.push(c.uuid);
     }
     pump();
@@ -1358,6 +1384,9 @@ function apply(ctx, rawConfig) {
           ' | data_dir=' + String(info.data_dir) +
           ' | server=' + String(info.bind)
         );
+
+        // Diagnostics must not change capture identity. Even a new server can
+        // hold legacy claude-code rows; runFinalize resolves the stored kind.
         if (config.dataDir) {
           const normalise = (p) => String(p).replace(/^\\\\\?\\/, '').replace(/[\\/]+$/, '').toLowerCase();
           if (normalise(info.data_dir) !== normalise(config.dataDir)) {

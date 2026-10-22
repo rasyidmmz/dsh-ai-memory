@@ -87,10 +87,10 @@ Two things must already work. The plugin will not do either of them for you.
 **1. A running ai-memory server with capture wired into DSH.**
 
 Install ai-memory from [upstream](https://github.com/akitaonrails/ai-memory),
-then wire DSH's lifecycle hooks so events are captured. ai-memory's own
-`install-hooks` command does **not** support DSH (`--agent dsh` is rejected), so
-the hook file is written by hand. A working example is in
-[`docs/hooks-dsh.json`](docs/hooks-dsh.json).
+then wire DSH's lifecycle hooks so events are captured. ai-memory >=3.2.0
+supports DSH natively; earlier versions need the legacy Claude Code bridge
+configuration. A manual, single-command-string example supporting older servers
+is in [`docs/hooks-dsh.json`](docs/hooks-dsh.json); see its native migration notes.
 
 Verify capture independently before blaming this plugin:
 
@@ -169,7 +169,7 @@ plugin behaves identically with no `config:` block at all.
       config:
         exePath: /usr/local/bin/ai-memory   # default: platform standard location
         dataDir: /home/me/.local/share/ai-memory  # default: let the CLI decide
-        agentKind: claude-code              # default: claude-code
+        # agentKind: dsh                     # optional pin; must match capture hooks
         sweep: true                         # default: true
         preflight: true                     # default: true
         timeoutMs: 120000                   # default: 120000
@@ -179,21 +179,34 @@ plugin behaves identically with no `config:` block at all.
 |---|---|---|
 | `exePath` | Windows: `%LOCALAPPDATA%\Programs\ai-memory\ai-memory.exe`; elsewhere: `ai-memory` from `PATH` | Path to the ai-memory executable. |
 | `dataDir` | unset | ai-memory data directory. **Leave unset** unless you use a non-standard location; the CLI then resolves its own, which is what the hooks use. |
-| `agentKind` | `claude-code` | The agent kind recorded in ai-memory's store. See the note below — this is not a free choice. |
+| `agentKind` | stored session kind, falling back to `claude-code` | An explicit value pins finalization to that capture identity. Leave unset for mixed legacy/native stores. |
 | `sweep` | `true` | The abandoned-session safety net. Set `false` to disable it entirely. |
 | `preflight` | `true` | Log one line at startup naming the ai-memory version, data directory, and server it found. |
 | `timeoutMs` | `120000` | Per-`finalize-session` timeout. |
 
-### Why `agentKind` should stay `claude-code`
+### Legacy and native DSH capture
 
-ai-memory recognises a fixed set of agent kinds — `claude-code`, `codex`,
-`cursor`, `open-code`, `opencode2`, `pi`, `omp`, `zero`, `kiro-cli`, `pool`,
-`zcode` — and rejects anything else outright. There is no `dsh` kind.
+ai-memory **3.2.0** added `AgentKind::Dsh` and migration V85. Its DSH support is
+now listed as **Hooks + MCP**. Earlier releases require `--agent claude-code`.
+The UUID mapping is unchanged.
 
-DSH reaches ai-memory through the Claude Code hook bridge, so every captured DSH
-session is stored as `claude-code`. That is simply what the store contains, and
-`finalize-session` must be told to look there. Passing anything else — including
-the CLI's own default, which is `codex` — will match no session ever.
+A server upgrade does **not** change the identity written by existing hooks.
+This plugin therefore reads each session's `agent_kind` from the local store
+(read-only), accepting only `dsh` and `claude-code`. That identity stays fixed
+through all project fallbacks and `--reopen`. Preflight never changes it.
+The sweeper also excludes unrelated harness kinds before applying its existing
+live-session, idle-time and UUIDv5 guards.
+
+If the row/store or `node:sqlite` is unavailable, finalization falls back to
+`claude-code`, matching the shipped legacy hook template. For native capture on
+a remote-only store, explicitly configure `agentKind: dsh`.
+
+To opt into native capture, first upgrade ai-memory to **3.2.0 or later**, then
+change every capture command in your hooks file from `--agent claude-code` to
+`--agent dsh` and restart DSH (the bridge reads hooks once). Start a new session
+and verify its stored identity. Leave plugin `agentKind` unset so old captured
+sessions can still finalize as `claude-code`. The plugin does not rewrite hooks,
+relabel database rows, or modify your profile patch.
 
 ## How it works
 

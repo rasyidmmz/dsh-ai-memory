@@ -16,6 +16,7 @@ proof it works — 1.0.1 did exactly that while finalizing nothing.
 
 | Plugin | DSH Desktop | ai-memory | Notes |
 |---|---|---|---|
+| 1.3.0 | Existing event/shell contract | 3.2.0 / 3.2.1 source checked | Mixed native/legacy SQLite fixture tests; local 3.2.0 CLI acceptance. Not a live 3.2.1 consolidation test. |
 | 1.2.1 | 0.2.1-rc.2 | 3.1.1 | Declares `dsh.engines` so the marketplace can gate incompatible hosts. Metadata only. |
 | 1.2.0 | 0.2.1-rc.2 | 3.1.1 | Marketplace readiness: startup diagnosis when ai-memory or the capture hooks are missing. |
 | 1.1.2 | 0.2.1-rc.2 | 3.1.1 | Compatibility re-verified against current hosts; no behaviour change. |
@@ -33,6 +34,36 @@ convention by capability (`typeof ctx.shell.execute`), not by version number, so
 it works on both old and new hosts.
 
 ---
+
+## [1.3.0] - 23 Oct 2026
+
+### Added
+
+- Native DSH capture identity support for ai-memory >=3.2.0 (AgentKind::Dsh,
+  migration V85). Each queued session reads its actual `agent_kind` from the
+  local SQLite store in read-only mode. Both `dsh` and legacy `claude-code`
+  sessions can coexist without relabeling rows or rewriting hooks.
+- The chosen identity stays fixed across project fallback attempts and reopen.
+  Explicit `agentKind` configuration still wins. An unavailable database or
+  `node:sqlite` falls back to the configured identity (`claude-code` by default).
+- SQLite fixture regression tests exercise native/legacy capture with preflight
+  enabled and disabled, explicit override, missing rows/database, unrelated
+  harness identity and a mixed abandoned-session backlog.
+
+### Fixed
+
+- The sweeper now filters out unrelated harness kinds before its existing
+  UUIDv5, live-session and idle-time guards, and preserves each row's identity.
+- Startup status is diagnostic only: a server upgrade never changes which
+  capture identity finalization targets.
+
+### Documentation
+
+- README and the legacy hook template explain native DSH support and coordinated
+  capture migration. Existing hooks and profile patches are left untouched.
+- Upstream v3.2.0/v3.2.1 source was checked for native DSH and unchanged UUID
+  derivation. Local 3.2.0 CLI accepts both identities; this is not a claim of
+  live end-to-end consolidation testing on 3.2.1.
 
 ## [1.2.1] - 18 Oct 2026
 
